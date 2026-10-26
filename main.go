@@ -32,9 +32,14 @@ const usage = `sweep — find and delete node_modules and framework build/cache 
 Usage:
   sweep [flags] [DIR]    DIR defaults to the current directory
 
+In a terminal, sweep opens a list of what it found, biggest first:
+  ↑/↓ or j/k    move
+  space         delete the highlighted folder right away
+  q             quit
+
 Flags:
-  -n, --dry-run   only list what would be deleted
-  -y, --yes       delete without asking
+  -n, --dry-run   only print the list, delete nothing
+  -y, --yes       delete everything listed, without opening the list
   -h, --help      show this help
       --version   print the version
 
