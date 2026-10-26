@@ -109,6 +109,9 @@ it isn't signed. Signing and notarising would need an Apple Developer account.
 
 CI runs the installer on every push to make sure it still works.
 
+The workflows pin each action to a commit SHA. Dependabot opens a pull request
+each month when one of them has a new version.
+
 ## Releasing
 
 Push a tag and GitHub Actions does the rest: it runs the tests, builds
