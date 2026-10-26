@@ -2,12 +2,13 @@
 
 [![test](https://github.com/devloop01/sweep/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/devloop01/sweep/actions/workflows/test.yml)
 
-Find and delete `node_modules` and framework build/cache folders (`.svelte-kit`,
-`.next`, `.turbo`, …) under a directory. Lists them biggest first with a total,
-asks once, then deletes them all.
+Free up disk space by deleting `node_modules` and framework build caches
+(`.next`, `.svelte-kit`, `.turbo`, …) across all your projects at once.
+sweep lists what it found, biggest first, asks once, then deletes.
 
 ```
-$ sweep ~/Documents/Code
+$ cd ~/Documents/Code
+$ sweep
 Scanning /Users/me/Documents/Code ...
     1.2 GB  agency/web/node_modules
   340.5 MB  agency/web/.svelte-kit
@@ -18,133 +19,104 @@ Delete all of these? [y/N] y
 Deleted 3 folders, freed about 1.5 GB.
 ```
 
-**First time? Run with `--dry-run`.**
+Everything it deletes by default comes back with `npm install` / `pnpm install`
+or your next dev or build run.
 
 ## Install
 
-Works on Apple Silicon Macs only. Intel Macs aren't supported.
+For Apple Silicon Macs.
 
-### With Go
-
-Needs Go 1.27 or later (`brew install go`):
+**With Go** (1.27 or later):
 
 ```sh
 go install github.com/devloop01/sweep@latest
 ```
 
-The binary goes in `~/go/bin`. Because it's built on your Mac, macOS doesn't
-quarantine it.
-
-### Without Go
+**Without Go:**
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/devloop01/sweep/main/install.sh | sh
 ```
 
-[`install.sh`](install.sh) downloads the binary from the latest release, checks
-it against `SHA256SUMS`, and puts it in `~/.local/bin`.
+The script downloads the binary from the latest release, checks its checksum,
+and installs it to `~/.local/bin`. For a specific release use
+`… | sh -s -- v0.2.0`; for another folder, `… | SWEEP_INSTALL_DIR=/some/dir sh`.
 
-- **A specific release:** `… | sh -s -- v0.2.0`
-- **Another folder:** `… | SWEEP_INSTALL_DIR=/some/dir sh`
-
-Download it with `curl` (or the script), not a browser. macOS quarantines
-unsigned binaries that browsers and Slack download, and Gatekeeper then blocks
-them. Files that `curl` downloads aren't quarantined. Don't disable Gatekeeper to
-get around this. Signing and notarising the binary would fix it, but that needs
-an Apple Developer account, which this project doesn't use yet.
-
-### PATH
-
-If `sweep --version` says "command not found", add the install folder to your
-PATH (`~/go/bin` for Go, `~/.local/bin` for the script), then open a new
-terminal:
+If `sweep` isn't found afterwards, add `~/go/bin` (Go) or `~/.local/bin`
+(script) to your PATH and open a new terminal:
 
 ```sh
-# zsh (the macOS default)
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile
-# fish
-fish_add_path ~/go/bin
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile   # zsh
+fish_add_path ~/go/bin                                     # fish
 ```
 
-### First run
+> The binary isn't signed by Apple. If you download it with a browser, macOS
+> quarantines it and won't run it. Use one of the commands above instead, and
+> don't disable Gatekeeper.
 
-```sh
-sweep --version                     # e.g. v0.2.0
-sweep --dry-run ~/Documents/Code    # lists what it would delete, deletes nothing
-```
-
-### Update or uninstall
-
-- **Update:** run the install command again.
-- **Uninstall:** `rm ~/go/bin/sweep` (Go) or `rm ~/.local/bin/sweep` (script).
-  Nothing else is installed.
-- **Installed from the private repo before?** You can drop that setting:
-  `go env -u GOPRIVATE`.
+To update, run the install command again. To uninstall, delete
+`~/go/bin/sweep` or `~/.local/bin/sweep`.
 
 ## Usage
 
+Run it inside the folder that holds your projects. Start with a dry run:
+
+```sh
+cd ~/Documents/Code
+sweep -n        # show what would be deleted, delete nothing
+sweep           # show, ask, delete
 ```
-sweep [flags] [DIR]      DIR defaults to the current directory
+
+```
+sweep [flags] [DIR]    DIR defaults to the current folder
 
 -n, --dry-run   only list what would be deleted
 -y, --yes       delete without asking
--b, --build     also include dist/ build/ out/
--d, --deploy    also include .vercel .netlify .wrangler
+-b, --build     also delete dist/ build/ out/
+-d, --deploy    also delete .vercel .netlify .wrangler
 -h, --help      show help
     --version   print the version
 ```
 
-Without `--yes`, sweep only deletes when you answer `y` or `yes`. Anything
-else, including piped input, cancels.
+Only `y` or `yes` at the prompt deletes. Anything else cancels, and so does
+piped input unless you pass `--yes`.
 
 ## What gets deleted
 
-All target lists are in [`internal/sweep/targets.go`](internal/sweep/targets.go).
+| | Folders |
+|---|---|
+| **Always** | `node_modules` `.svelte-kit` `.turbo` `.next` `.nuxt` `.output` `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `storybook-static`, and `.vercel/output` (the rest of `.vercel` is kept) |
+| **`--build`** | `dist` `build` `out`. Opt-in because some projects commit these or keep real files in them. |
+| **`--deploy`** | All of `.vercel` `.netlify` `.wrangler`. Opt-in because they aren't just cache: you'll need `vercel link` again, and local D1/KV/R2/Durable Objects data in `.wrangler/state` is lost. |
 
-- **Default:** `node_modules .svelte-kit .turbo .next .nuxt .output .astro .vite
-  .parcel-cache .angular .docusaurus .nx storybook-static`, plus `.vercel/output`.
-  Only the output folder goes, so `.vercel/project.json` stays.
-- **`--build`:** `dist build out`. These are opt-in because projects sometimes
-  commit them or keep real files in them.
-- **`--deploy`:** the whole `.vercel`, `.netlify` and `.wrangler` folders. These
-  aren't pure cache: you'll need to run `vercel link` again, and `.wrangler/state`
-  holds local D1/KV/R2/Durable Objects dev data, which is lost.
+The lists live in [`internal/sweep/targets.go`](internal/sweep/targets.go).
 
 ## Safety
 
-- Refuses to run as root (`sudo`).
-- Refuses to run in `/`, your home folder or any folder above it (such as
-  `/Users`), `~/Library`, `~/Applications`, hidden folders in your home such
-  as `~/.nvm`, `~/.vscode` or `~/.bun` (global installs and editor extensions
-  live there), `/System`, `/Applications`, `/Library`, `/opt`, `/usr`,
-  `/private` (this includes `/tmp` and `/var`), `/Volumes` itself, and `*.app`
-  bundles. Paths are compared ignoring case, like APFS does. "Your home
-  folder" means both `$HOME` and the home folder macOS has on record, since
-  `$HOME` can be changed.
-- Never follows symlinks, and never looks inside `.git` folders or `*.app`
-  bundles. Electron apps ship their own `node_modules`. This also means a
-  project folder named like a domain, such as `acme.app`, is skipped entirely,
-  and refused if you pass it as DIR. Rename it, or clean it by hand.
-- Stays on DIR's volume, like `find -xdev`. A network share, disk image or
-  other volume mounted inside DIR is never swept, and a target with something
-  mounted inside it is skipped.
-- Only real folders are deleted. A symlink or file named `node_modules` is
-  skipped.
-- Each folder is checked again right before deletion. It must still be inside
-  DIR, reached without going through a symlink, and still a real target folder.
-  The deletion itself goes through a handle to DIR opened before the scan
-  (`os.Root`), so a folder swapped for a symlink at the last moment still can't
-  lead it outside DIR.
-- Anything typed while sweep is scanning is discarded before the prompt, so an
-  early `y` and Enter can't confirm a list you haven't seen.
+sweep deletes folders, so it errs on the side of skipping them.
+
+- **It won't run in** your home folder or any folder above it, `~/Library`,
+  `~/Applications`, hidden folders in your home (`~/.nvm`, `~/.vscode`, …),
+  system folders (`/System`, `/Library`, `/usr`, `/opt`, `/private`, which
+  covers `/tmp`), `/Volumes` itself, or inside an `.app`. It also refuses to
+  run as root (`sudo`).
+- **It never follows symlinks.** A symlink named `node_modules` is skipped,
+  and so is a file with a target's name.
+- **It skips `.git` folders and `.app` bundles.** Electron apps ship their own
+  `node_modules`. This also skips a project folder named like `acme.app`.
+- **It stays on one drive.** Network shares, disk images and other volumes
+  mounted inside the folder are left alone.
+- **It checks every folder again right before deleting it.** Deletion can't
+  leave the folder you started in, even if something is swapped for a symlink
+  at the last moment.
+- **It ignores anything you type while it's scanning**, so an early `y` can't
+  confirm a list you haven't seen.
 
 ## Sizes
 
-Sizes are disk usage, as `du` reports it, not apparent file size. A file that
-is hard-linked into several folders is counted once. **pnpm:** `node_modules`
-is mostly hard links into the pnpm store, which keeps those files after the
-folder is deleted. So for pnpm projects, the space actually freed can be much
-lower than the size shown.
+Sizes are actual disk usage, like `du`, and a hard-linked file is counted
+once. With pnpm, `node_modules` is mostly hard links into pnpm's store, which
+keeps the files, so the space freed can be much lower than the size shown.
 
 ## Development
 
