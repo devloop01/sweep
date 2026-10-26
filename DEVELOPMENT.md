@@ -80,11 +80,13 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 
 ### Config validation
 
-A user's `targets.conf` can only change which folder names count as targets.
-Each entry must be one exact folder name (`parent/child` in `[nested]`).
-Paths, wildcards, spaces, control characters, `.`, `..`, `.git`, `*.app`,
-unknown sections and repeated sections are rejected, and any mistake stops the
-run with the line number before scanning. A nested target is dropped when its
+A user's `targets.conf` extends the built-in lists: each name is added to its
+section, and `!name` removes one. It can only change which folder names count
+as targets. Each entry must be one exact folder name (`parent/child` in
+`[nested]`). Paths, wildcards, spaces, control characters, `.`, `..`, `.git`,
+`*.app` and unknown sections are rejected, and so is a `!name` that isn't in
+the list, so a typo can't silently leave a folder deletable. Any mistake stops
+the run with the line number before scanning. A nested target is dropped when its
 parent is deleted whole, so `--deploy` doesn't list `.vercel/output` twice.
 
 ## Sizes

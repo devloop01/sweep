@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -25,27 +26,56 @@ func TestDefaultLists(t *testing.T) {
 	}
 }
 
-func TestUserSectionsReplaceDefaults(t *testing.T) {
+func TestUserConfigExtendsDefaults(t *testing.T) {
 	got, err := parseLists(`
-# my overrides
+# my additions
 [default]
-  node_modules
-.cache
+  .cache
+node_modules
+!.output
 
 [nested]
+!.vercel/output
+
+[build]
+coverage
+
+[default]
+.expo
 `, DefaultLists())
 	if err != nil {
 		t.Fatal(err)
 	}
 	def := DefaultLists()
-	if !reflect.DeepEqual(got.Default, []string{"node_modules", ".cache"}) {
-		t.Errorf("Default = %q", got.Default)
+	wantDefault := slices.DeleteFunc(slices.Clone(def.Default), func(s string) bool { return s == ".output" })
+	wantDefault = append(wantDefault, ".cache", ".expo") // node_modules was already there: not doubled
+	if !reflect.DeepEqual(got.Default, wantDefault) {
+		t.Errorf("Default = %q\nwant %q", got.Default, wantDefault)
 	}
-	if len(got.Nested) != 0 { // an empty section means none
-		t.Errorf("Nested = %q, want none", got.Nested)
+	if len(got.Nested) != 0 {
+		t.Errorf("Nested = %q, want .vercel/output removed", got.Nested)
 	}
-	if !reflect.DeepEqual(got.Build, def.Build) || !reflect.DeepEqual(got.Deploy, def.Deploy) {
-		t.Errorf("sections not in the file changed: %+v", got)
+	if !reflect.DeepEqual(got.Build, append(slices.Clone(def.Build), "coverage")) {
+		t.Errorf("Build = %q", got.Build)
+	}
+	if !reflect.DeepEqual(got.Deploy, def.Deploy) {
+		t.Errorf("Deploy changed: %q", got.Deploy)
+	}
+}
+
+// A removal that matches nothing is an error, so a typo can't silently keep
+// a folder deletable.
+func TestRemovingUnknownNameFails(t *testing.T) {
+	for src, want := range map[string]string{
+		"[default]\n!.outptu":           `line 2: can't remove ".outptu": it isn't in the [default] list`,
+		"[build]\n!node_modules":        `isn't in the [build] list`,
+		"[default]\n!":                  "isn't a folder name",
+		"[default]\n!src/lib":           "must be a folder name",
+		"[default]\n!.output\n!.output": `line 3: can't remove ".output"`,
+	} {
+		if _, err := parseLists(src, DefaultLists()); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("parseLists(%q) error %v, want it to mention %q", src, err, want)
+		}
 	}
 }
 
@@ -65,7 +95,6 @@ func TestBadConfig(t *testing.T) {
 		"[default]\nbad\u202ename":       "control characters",
 		"node_modules":                   "line 1: \"node_modules\" is outside a section",
 		"[defaults]\nx":                  "unknown section [defaults]",
-		"[build]\ndist\n[build]\nout":    "line 3: section [build] appears twice",
 	} {
 		if _, err := parseLists(src, DefaultLists()); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("parseLists(%q) error %v, want it to mention %q", src, err, want)
@@ -83,7 +112,7 @@ func TestLoadLists(t *testing.T) {
 	p := filepath.Join(dir, "targets.conf")
 	must(t, os.WriteFile(p, []byte("[build]\nbin\n"), 0o644))
 	l, used, err = LoadLists(p)
-	if err != nil || !used || !reflect.DeepEqual(l.Build, []string{"bin"}) {
+	if err != nil || !used || !reflect.DeepEqual(l.Build, []string{"dist", "build", "out", "bin"}) {
 		t.Errorf("user file: %+v %v %v", l, used, err)
 	}
 

@@ -73,22 +73,24 @@ You can also pass a folder instead of using `cd`: `sweep -n ~/Documents/Code`.
 
 ## Customize
 
-To choose your own folders, create `~/.config/sweep/targets.conf`. For
-example, to also delete `.cache` folders with `--build`:
+Create `~/.config/sweep/targets.conf` and list the extra folder names you
+want deleted. They're added to the built-in lists. Put `!` in front of a name
+to stop deleting it:
 
 ```
-[build]
-dist
-build
-out
+[default]
 .cache
+!.output
+
+[build]
+coverage
 ```
 
-A section you write replaces that built-in list, so list everything you
-want in it. Sections you leave out stay as they are. The sections are
-`[default]`, `[build]`, `[deploy]` and `[nested]`; see the
-[built-in lists](internal/sweep/targets.conf) for all of them. If the file has
-a mistake, sweep tells you the line and doesn't run.
+This deletes `.cache` folders too, never deletes `.output` folders, and adds
+`coverage` to what `--build` deletes. The sections are `[default]` (always),
+`[build]` (with `--build`), `[deploy]` (with `--deploy`) and `[nested]`; see
+the [built-in lists](internal/sweep/targets.conf). If the file has a mistake,
+sweep tells you the line and doesn't run.
 
 ## Skip a folder
 

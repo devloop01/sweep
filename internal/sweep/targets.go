@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -34,9 +35,8 @@ func DefaultLists() Lists {
 	return l
 }
 
-// LoadLists returns the built-in lists with each section found in the
-// user's file at path replacing the built-in one. A missing file is not an
-// error; used reports whether it was read.
+// LoadLists returns the built-in lists extended by the user's file at path.
+// A missing file is not an error; used reports whether it was read.
 func LoadLists(path string) (l Lists, used bool, err error) {
 	src, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -52,13 +52,12 @@ func LoadLists(path string) (l Lists, used bool, err error) {
 	return l, true, nil
 }
 
-// parseLists reads src in the targets.conf format. Sections in src replace
-// the same sections of base.
+// parseLists reads src in the targets.conf format and applies it to base:
+// each name is added to its section, and "!name" removes a name already in it.
 func parseLists(src string, base Lists) (Lists, error) {
 	sections := map[string]*[]string{
 		"default": &base.Default, "nested": &base.Nested, "build": &base.Build, "deploy": &base.Deploy,
 	}
-	seen := map[string]bool{}
 	var cur *[]string
 	var curName string
 	n := 0
@@ -74,18 +73,25 @@ func parseLists(src string, base Lists) (Lists, error) {
 			if !ok {
 				return Lists{}, fmt.Errorf("line %d: unknown section [%s]; use [default], [nested], [build] or [deploy]", n, curName)
 			}
-			if seen[curName] {
-				return Lists{}, fmt.Errorf("line %d: section [%s] appears twice", n, curName)
-			}
-			seen[curName] = true
-			cur, *p = p, nil
+			cur = p
 		case cur == nil:
 			return Lists{}, fmt.Errorf("line %d: %q is outside a section; start with a [section] line", n, line)
 		default:
-			if err := checkEntry(line, curName == "nested"); err != nil {
+			name, remove := strings.CutPrefix(line, "!")
+			if err := checkEntry(name, curName == "nested"); err != nil {
 				return Lists{}, fmt.Errorf("line %d: %q %w", n, line, err)
 			}
-			*cur = append(*cur, line)
+			i := slices.Index(*cur, name)
+			switch {
+			case remove && i < 0:
+				// An error, not a no-op: a typo here would keep deleting a
+				// folder the user meant to protect.
+				return Lists{}, fmt.Errorf("line %d: can't remove %q: it isn't in the [%s] list", n, name, curName)
+			case remove:
+				*cur = slices.Delete(*cur, i, i+1)
+			case i < 0:
+				*cur = append(*cur, name)
+			}
 		}
 	}
 	return base, nil

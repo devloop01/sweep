@@ -263,18 +263,22 @@ func TestUserConfig(t *testing.T) {
 	root := fixture(t)
 	os.MkdirAll(filepath.Join(root, "a/.cache/x"), 0o755)
 	var o, e bytes.Buffer
-	cfg := writeConfig(t, "[default]\n.cache\n")
+	// Adds .cache to the built-in list and takes .svelte-kit out of it.
+	cfg := writeConfig(t, "[default]\n.cache\n!.svelte-kit\n")
 	code := run([]string{"--yes", root}, env{
 		configPath: cfg, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
 	})
-	if code != 0 || !strings.Contains(o.String(), "Using targets from "+cfg) || !strings.Contains(o.String(), "Deleted 1 folder, ") {
+	if code != 0 || !strings.Contains(o.String(), "Using targets from "+cfg) || !strings.Contains(o.String(), "Deleted 3 folders, ") {
 		t.Errorf("code %d, out:\n%s\nstderr:\n%s", code, o.String(), e.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "a/.cache")); err == nil {
 		t.Error("a/.cache wasn't deleted")
 	}
-	if targetsLeft(root) != 3 {
-		t.Error("deleted default targets the config replaced")
+	if _, err := os.Stat(filepath.Join(root, "c/.svelte-kit")); err != nil {
+		t.Error("c/.svelte-kit was deleted although the config removed it")
+	}
+	if targetsLeft(root) != 1 { // only c/.svelte-kit
+		t.Errorf("%d targets left, want 1", targetsLeft(root))
 	}
 }
 
