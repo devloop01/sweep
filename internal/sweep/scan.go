@@ -73,7 +73,7 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 					mu.Unlock()
 					continue
 				}
-				m := measure(p)
+				m := measure(p, progress)
 				if m.otherFS {
 					continue // a mount inside the target: deleting would reach into it
 				}
@@ -214,17 +214,23 @@ type measured struct {
 }
 
 // measure adds up allocated blocks under p like `du -sk`, without
-// following symlinks, and notes whether anything is mounted inside.
-func measure(p string) measured {
+// following symlinks, and notes whether anything is mounted inside. Each
+// folder it enters counts towards progress (may be nil), so a scan doesn't
+// look stuck while big node_modules are measured.
+func measure(p string, progress *Progress) measured {
 	m := measured{path: p, shared: map[inode]int64{}}
 	fi, err := os.Lstat(p)
 	if err != nil {
 		return m
 	}
 	pDev := dev(fi)
-	filepath.WalkDir(p, func(_ string, d fs.DirEntry, err error) error {
+	filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // count what can be read
+		}
+		if progress != nil && d.IsDir() {
+			progress.dirs.Add(1)
+			progress.current.Store(&path)
 		}
 		info, err := d.Info() // lstat
 		if err != nil {

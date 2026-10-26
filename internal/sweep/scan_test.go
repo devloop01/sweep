@@ -253,8 +253,8 @@ func TestHardLinksCountedOnce(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(a, "f"), make([]byte, 1<<20), 0o644))
 	must(t, os.Link(filepath.Join(a, "f"), filepath.Join(b, "f")))
 
-	blocks := func(p string) int64 { return measure(p).own } // dir blocks only: f has 2 links
-	file := measure(a).shared
+	blocks := func(p string) int64 { return measure(p, nil).own } // dir blocks only: f has 2 links
+	file := measure(a, nil).shared
 	if len(file) != 1 {
 		t.Fatalf("want 1 shared inode, got %v", file)
 	}
@@ -359,8 +359,9 @@ func TestProgressCountsFolders(t *testing.T) {
 	_, root := build(t, "root/a/src/", "root/b/node_modules/f", "root/c/d/e/")
 	var p Progress
 	Scan(root, DefaultTargets(), 4, &p)
-	// root, a, a/src, b, c, c/d, c/d/e: node_modules is matched, not read.
-	if p.Dirs() != 7 || p.Current() == "" {
-		t.Errorf("Dirs() = %d, Current() = %q; want 7 and a folder", p.Dirs(), p.Current())
+	// The walk reads root, a, a/src, b, c, c/d, c/d/e; measuring the match
+	// enters b/node_modules, so progress keeps moving while sizes are taken.
+	if p.Dirs() != 8 || p.Current() == "" {
+		t.Errorf("Dirs() = %d, Current() = %q; want 8 and a folder", p.Dirs(), p.Current())
 	}
 }
