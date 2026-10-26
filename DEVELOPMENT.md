@@ -109,8 +109,10 @@ CI runs the installer on every push to make sure it still works.
 
 Push a tag and GitHub Actions does the rest: it runs the tests, builds
 `sweep-darwin-arm64`, checks that it reports the tag's version, writes
-`SHA256SUMS`, attests the build, and publishes the release with generated
-notes, which you can edit afterwards.
+`SHA256SUMS`, attests the build, and publishes the release. The release notes
+list the commit messages since the last release, plus install commands, so
+write commit subjects you'd be happy to see there. You can edit the notes on
+GitHub afterwards.
 
 ```sh
 git tag -a v0.4.0 -m v0.4.0 && git push origin v0.4.0
