@@ -34,7 +34,7 @@ func watch(e env, p *sweep.Progress, root string) (stop func()) {
 				return
 			case <-tick.C:
 				rel, _ := filepath.Rel(root, p.Current())
-				fmt.Fprint(e.stderr, "\r\x1b[K"+status(p.Dirs(), rel, termWidth()))
+				fmt.Fprint(e.stderr, "\r\x1b[K"+status(p.Dirs(), rel, termWidth(os.Stderr)))
 			}
 		}
 	})
@@ -60,10 +60,10 @@ func status(dirs int64, current string, width int) string {
 	return s + string(path)
 }
 
-// termWidth is stderr's terminal width in columns, or 80.
-func termWidth() int {
+// termWidth is f's terminal width in columns, or 80.
+func termWidth(f *os.File) int {
 	var ws struct{ rows, cols, x, y uint16 }
-	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, os.Stderr.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)))
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)))
 	if errno != 0 || ws.cols == 0 {
 		return 80
 	}

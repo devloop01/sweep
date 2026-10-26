@@ -7,11 +7,11 @@ Free up disk space by deleting `node_modules` and build caches (`.next`,
 $ cd ~/Documents/Code
 $ sweep
 Scanning /Users/me/Documents/Code ...
-    1.2 GB  agency/web/node_modules
-  340.5 MB  agency/web/.svelte-kit
-   12.0 KB  site/.vercel/output
-----
-3 folders, 1.5 GB
+agency/web/node_modules      1.2 GB
+agency/web/.svelte-kit     340.5 MB
+site/.vercel/output         12.0 KB
+-----------------------------------
+3 folders                    1.5 GB
 Delete all of these? [y/N] y
 Deleted 3 folders, freed about 1.5 GB.
 ```

@@ -54,6 +54,7 @@ type env struct {
 	stdin          io.Reader
 	isTTY          bool   // stdin is a terminal
 	color          bool   // stdout takes ANSI colors
+	cols           int    // stdout's width; 0 when it isn't a terminal
 	live           bool   // stderr is a terminal: show scan progress
 	flushInput     func() // discards type-ahead before the prompt; nil in tests
 	stdout, stderr io.Writer
@@ -64,9 +65,13 @@ func main() {
 	if bi, ok := debug.ReadBuildInfo(); ok && version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		version = bi.Main.Version // go install ...@v1.2.3
 	}
+	cols := 0
+	if isTerminal(os.Stdout) {
+		cols = termWidth(os.Stdout)
+	}
 	os.Exit(run(os.Args[1:], env{
-		configPath: configPath(),
-		asRoot:     os.Geteuid() == 0, homes: sweep.Homes(), system: sweep.SystemRoots,
+		configPath: configPath(), cols: cols,
+		asRoot: os.Geteuid() == 0, homes: sweep.Homes(), system: sweep.SystemRoots,
 		stdin: os.Stdin, isTTY: isTerminal(os.Stdin), flushInput: flushTypeahead,
 		color:  colorOK(isTerminal(os.Stdout), os.Getenv),
 		live:   isTerminal(os.Stderr) && os.Getenv("TERM") != "dumb",
@@ -190,13 +195,32 @@ func run(args []string, e env) int {
 		skipped()
 		return 0
 	}
+	// Paths on the left, sizes right-aligned in one column after the longest
+	// path, kept within the terminal. A longer path isn't cut (it's a list of
+	// what gets deleted); it just pushes its own size along.
+	paths := make([]string, len(cands))
+	col := len(folders(len(cands)))
 	var total int64
-	for _, c := range cands {
+	for i, c := range cands {
 		rel, _ := filepath.Rel(root, c.Path)
-		fmt.Fprintf(e.stdout, "%s  %s\n", e.paint(sizeStyle(c.Size), fmt.Sprintf("%10s", human(c.Size))), printable(rel))
+		paths[i] = printable(rel)
+		col = max(col, utf8.RuneCountInString(paths[i]))
 		total += c.Size
 	}
-	fmt.Fprintf(e.stdout, "----\n%s\n", e.paint(bold, folders(len(cands))+", "+human(total)))
+	width := e.cols
+	if width == 0 {
+		width = 80
+	}
+	col = max(min(col, width-13), 1) // 2 spaces + 10 for the size + 1 spare
+	row := func(label, labelStyle string, size int64, style string) {
+		pad := strings.Repeat(" ", max(col-utf8.RuneCountInString(label), 0))
+		fmt.Fprintf(e.stdout, "%s%s  %s\n", e.paint(labelStyle, label), pad, e.paint(style, fmt.Sprintf("%10s", human(size))))
+	}
+	for i, c := range cands {
+		row(paths[i], "", c.Size, sizeStyle(c.Size))
+	}
+	fmt.Fprintln(e.stdout, strings.Repeat("-", col+12))
+	row(folders(len(cands)), bold, total, bold)
 	skipped()
 
 	if dryRun {

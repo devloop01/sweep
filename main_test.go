@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // fixture makes a temp DIR with two targets and a file that must survive.
@@ -107,21 +108,23 @@ func TestDryRun(t *testing.T) {
 	if code != 0 || targetsLeft(root) != 3 {
 		t.Fatalf("code %d, left %d", code, targetsLeft(root))
 	}
-	// Sizes depend on the filesystem's block size, so match on shape.
+	// Sizes depend on the filesystem's block size, so match on shape: paths
+	// left, sizes right-aligned in one column, the total under them.
 	want := regexp.MustCompile(`^Scanning ` + regexp.QuoteMeta(root) + ` \.\.\.
- {2,}\d+\.\d KB  a/node_modules
- {2,}\d+\.\d KB  c/\.svelte-kit
- {2,}\d+\.\d KB  e/weird\?name/node_modules
-----
-3 folders, \d+\.\d KB
+a/node_modules +\d+\.\d KB
+c/\.svelte-kit +\d+\.\d KB
+e/weird\?name/node_modules +\d+\.\d KB
+-{37}
+3 folders +\d+\.\d KB
 Dry run: nothing deleted\.
 $`)
 	if !want.MatchString(out) {
 		t.Errorf("out:\n%s", out)
 	}
-	for _, l := range strings.Split(out, "\n")[1:4] {
-		if len(l) < 12 || l[10:12] != "  " {
-			t.Errorf("size column not 10 wide: %q", l)
+	// The longest path is 25 runes; every row is path column + 2 + 10.
+	for _, l := range strings.Split(out, "\n")[1:6] {
+		if utf8.RuneCountInString(l) != 37 {
+			t.Errorf("row not 37 wide: %q", l)
 		}
 	}
 }
@@ -350,5 +353,24 @@ func TestKeptFoldersAreReported(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "p/dist/app.js")); err != nil {
 		t.Error("deleted a tracked folder")
+	}
+}
+
+// In a narrow terminal the size column moves in, and a path too long for it
+// is printed whole (never cut) with its size after it.
+func TestLayoutNarrowTerminal(t *testing.T) {
+	root := fixture(t)
+	var o, e bytes.Buffer
+	run([]string{"-n", root}, env{cols: 32, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4})
+	lines := strings.Split(o.String(), "\n")
+	byPath := map[string]string{}
+	for _, l := range lines[1:4] {
+		byPath[strings.Fields(l)[0]] = l
+	}
+	if l := byPath["a/node_modules"]; utf8.RuneCountInString(l) != 31 {
+		t.Errorf("short path row should be 32-1 wide: %q", l)
+	}
+	if l := byPath["e/weird?name/node_modules"]; !strings.HasPrefix(l, "e/weird?name/node_modules  ") {
+		t.Errorf("long path cut or misplaced: %q", l)
 	}
 }
