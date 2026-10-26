@@ -13,100 +13,81 @@ import (
 	"unicode"
 )
 
-// builtin holds the default target lists; see targets.conf for the format.
+// builtin is the default target list; see targets.conf for the format.
 //
 //go:embed targets.conf
 var builtin string
 
-// Lists are the folder names sweep targets, by section of targets.conf.
-type Lists struct {
-	Default []string // always
-	Nested  []string // always; "parent/child", only child goes
-	Build   []string // with --build
-	Deploy  []string // with --deploy
+// DefaultTargets returns the built-in targets.
+func DefaultTargets() Targets {
+	return NewTargets(defaultEntries())
 }
 
-// DefaultLists returns the built-in lists.
-func DefaultLists() Lists {
-	l, err := parseLists(builtin, Lists{})
+func defaultEntries() []string {
+	e, err := parseList(builtin, nil)
 	if err != nil {
-		panic("built-in targets.conf: " + err.Error()) // caught by TestDefaultLists
+		panic("built-in targets.conf: " + err.Error()) // caught by TestDefaultTargets
 	}
-	return l
+	return e
 }
 
-// LoadLists returns the built-in lists extended by the user's file at path.
-// A missing file is not an error; used reports whether it was read.
-func LoadLists(path string) (l Lists, used bool, err error) {
+// LoadTargets returns the built-in targets changed by the user's file at
+// path. A missing file is not an error; used reports whether it was read.
+func LoadTargets(path string) (t Targets, used bool, err error) {
 	src, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return DefaultLists(), false, nil
+		return DefaultTargets(), false, nil
 	}
 	if err != nil {
-		return Lists{}, false, err
+		return Targets{}, false, err
 	}
-	l, err = parseLists(string(src), DefaultLists())
+	e, err := parseList(string(src), defaultEntries())
 	if err != nil {
-		return Lists{}, false, fmt.Errorf("%s %w", path, err)
+		return Targets{}, false, fmt.Errorf("%s %w", path, err)
 	}
-	return l, true, nil
+	return NewTargets(e), true, nil
 }
 
-// parseLists reads src in the targets.conf format and applies it to base:
-// each name is added to its section, and "!name" removes a name already in it.
-func parseLists(src string, base Lists) (Lists, error) {
-	sections := map[string]*[]string{
-		"default": &base.Default, "nested": &base.Nested, "build": &base.Build, "deploy": &base.Deploy,
-	}
-	var cur *[]string
-	var curName string
+// parseList reads src, a .gitignore-style list, and applies it to base:
+// each line adds a name, and "!name" removes one that's in the list.
+func parseList(src string, base []string) ([]string, error) {
+	entries := slices.Clone(base)
 	n := 0
 	for line := range strings.Lines(src) {
 		n++
 		line = strings.TrimSpace(line)
-		switch {
-		case line == "" || strings.HasPrefix(line, "#"):
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
-		case strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]"):
-			curName = line[1 : len(line)-1]
-			p, ok := sections[curName]
-			if !ok {
-				return Lists{}, fmt.Errorf("line %d: unknown section [%s]; use [default], [nested], [build] or [deploy]", n, curName)
-			}
-			cur = p
-		case cur == nil:
-			return Lists{}, fmt.Errorf("line %d: %q is outside a section; start with a [section] line", n, line)
-		default:
-			name, remove := strings.CutPrefix(line, "!")
-			if err := checkEntry(name, curName == "nested"); err != nil {
-				return Lists{}, fmt.Errorf("line %d: %q %w", n, line, err)
-			}
-			i := slices.Index(*cur, name)
-			switch {
-			case remove && i < 0:
-				// An error, not a no-op: a typo here would keep deleting a
-				// folder the user meant to protect.
-				return Lists{}, fmt.Errorf("line %d: can't remove %q: it isn't in the [%s] list", n, name, curName)
-			case remove:
-				*cur = slices.Delete(*cur, i, i+1)
-			case i < 0:
-				*cur = append(*cur, name)
-			}
+		}
+		name, remove := strings.CutPrefix(line, "!")
+		name = strings.TrimSuffix(name, "/") // "node_modules/" means the same, as in .gitignore
+		if err := checkEntry(name); err != nil {
+			return nil, fmt.Errorf("line %d: %q %w", n, line, err)
+		}
+		i := slices.Index(entries, name)
+		switch {
+		case remove && i < 0:
+			// An error, not a no-op: a typo here would keep deleting a
+			// folder the user meant to protect.
+			return nil, fmt.Errorf("line %d: can't remove %q: sweep doesn't delete it anyway", n, name)
+		case remove:
+			entries = slices.Delete(entries, i, i+1)
+		case i < 0:
+			entries = append(entries, name)
 		}
 	}
-	return base, nil
+	return entries, nil
 }
 
-// checkEntry accepts only plain folder names (parent/child for nested), so
-// a config line can never mean a path, a pattern, or a folder sweep must
-// never enter.
-func checkEntry(e string, nested bool) error {
-	parts := strings.Split(e, "/")
-	if nested && len(parts) != 2 {
-		return errors.New("must be parent/child, like .vercel/output")
+// checkEntry accepts only a plain folder name or parent/child, so a config
+// line can never mean a path, a pattern, or a folder sweep must never enter.
+func checkEntry(e string) error {
+	if strings.HasPrefix(e, "/") {
+		return errors.New("doesn't need a leading /: names match at any depth")
 	}
-	if !nested && len(parts) != 1 {
-		return errors.New("must be a folder name, not a path (nested folders go in [nested])")
+	parts := strings.Split(e, "/")
+	if len(parts) > 2 {
+		return errors.New("can be a folder name or parent/child, not a longer path")
 	}
 	for _, p := range parts {
 		switch {
@@ -126,29 +107,23 @@ func checkEntry(e string, nested bool) error {
 // Targets is the set of folders one run deletes.
 type Targets struct {
 	names  map[string]bool
-	nested []string
+	nested []string // "parent/child": only child goes
 }
 
-// Targets returns what a run with these flags deletes.
-func (l Lists) Targets(build, deploy bool) Targets {
+// NewTargets builds Targets from list entries: folder names and
+// parent/child pairs.
+func NewTargets(entries []string) Targets {
 	t := Targets{names: map[string]bool{}}
-	add := func(names []string) {
-		for _, n := range names {
-			t.names[n] = true
+	for _, e := range entries {
+		if !strings.Contains(e, "/") {
+			t.names[e] = true
 		}
 	}
-	add(l.Default)
-	if build {
-		add(l.Build)
-	}
-	if deploy {
-		add(l.Deploy)
-	}
-	// A nested target whose parent goes whole is redundant (with --deploy,
-	// .vercel/output inside .vercel): drop it so nothing is listed twice.
-	for _, n := range l.Nested {
-		if parent, _, _ := strings.Cut(n, "/"); !t.names[parent] {
-			t.nested = append(t.nested, n)
+	// A nested target whose parent goes whole is redundant (.vercel/output
+	// when .vercel is listed): drop it so nothing is listed twice.
+	for _, e := range entries {
+		if parent, _, ok := strings.Cut(e, "/"); ok && !t.names[parent] {
+			t.nested = append(t.nested, e)
 		}
 	}
 	return t

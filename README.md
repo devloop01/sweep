@@ -54,43 +54,43 @@ sweep -n     # dry run: shows what would be deleted, deletes nothing
 sweep        # shows the list, asks once, then deletes
 ```
 
-| Flag | What it does |
-|---|---|
-| `-n`, `--dry-run` | Only show what would be deleted |
-| `-y`, `--yes` | Delete without asking |
-| `-b`, `--build` | Also delete `dist`, `build` and `out` folders |
-| `-d`, `--deploy` | Also delete `.vercel`, `.netlify` and `.wrangler` folders |
-
-You can also pass a folder instead of using `cd`: `sweep -n ~/Documents/Code`.
+Add `-y` to skip the question. You can also pass a folder instead of using
+`cd`: `sweep -n ~/Documents/Code`.
 
 ## What gets deleted
 
-| | |
-|---|---|
-| **Always** | `node_modules` `.next` `.svelte-kit` `.turbo` `.nuxt` `.output` `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `.vinxi` `storybook-static`, and `.vercel/output` |
-| **With `--build`** | `dist` `build` `out`. Some projects keep real files in these, so check the list first. |
-| **With `--deploy`** | `.vercel` `.netlify` `.wrangler`. You'll need to run `vercel link` again, and local Cloudflare dev data (D1, KV, R2) is lost. |
+Only folders that are safe to throw away, because your tools rebuild them
+for free:
+
+- **Dependencies:** `node_modules`
+- **Framework caches:** `.next` `.svelte-kit` `.turbo` `.nuxt` `.output`
+  `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `.vinxi`
+  `storybook-static` and `.vercel/output`
+- **Build output:** `dist` `build` `out`. If git tracks any file inside one
+  (a committed `dist`, scripts kept in `build`), sweep keeps it and tells you.
+
+sweep never deletes anything that would make you set up a project again, like
+`.vercel` or `.netlify` (your project link) or `.wrangler` (local Cloudflare
+data). You can add those yourself if you want.
 
 ## Customize
 
-Create `~/.config/sweep/targets.conf` and list the extra folder names you
-want deleted. They're added to the built-in lists. Put `!` in front of a name
-to stop deleting it:
+Create `~/.config/sweep/targets.conf`, one folder name per line, like a
+`.gitignore`:
 
 ```
-[default]
+# also delete these
 .cache
-!.output
-
-[build]
 coverage
+
+# never delete these
+!.output
+!out
 ```
 
-This deletes `.cache` folders too, never deletes `.output` folders, and adds
-`coverage` to what `--build` deletes. The sections are `[default]` (always),
-`[build]` (with `--build`), `[deploy]` (with `--deploy`) and `[nested]`; see
-the [built-in lists](internal/sweep/targets.conf). If the file has a mistake,
-sweep tells you the line and doesn't run.
+Names you list are deleted too. Put `!` in front of a name to stop deleting
+it. `parent/child` deletes only `child` inside `parent`, like `.vercel/output`.
+If the file has a mistake, sweep tells you the line and doesn't run.
 
 ## Skip a folder
 
@@ -109,6 +109,7 @@ list first. It also:
 
 - won't run in your home folder, `~/Library`, system folders, or with `sudo`
 - never follows shortcuts (symlinks), and never touches `.git` folders or apps
+- keeps any folder that git tracks files in
 - stays on your Mac's drive: it won't go into network shares or USB drives
   mounted inside the folder
 

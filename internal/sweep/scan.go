@@ -20,15 +20,16 @@ type Candidate struct {
 }
 
 // Scan finds the target folders under root, which must already be resolved
-// and passed by CheckRoot. It never follows symlinks, never enters .git or
+// and passed by CheckRoot. Targets that may hold git-tracked files (see
+// tracked) are not candidates; their paths are returned as kept. It never follows symlinks, never enters .git or
 // *.app folders, never crosses onto another volume or mount (like
 // find -xdev), and does not look inside a match. Results are sorted by size
 // (biggest first), then path.
-func Scan(root string, t Targets, workers int) []Candidate {
+func Scan(root string, t Targets, workers int) (cands []Candidate, kept []string) {
 	workers = max(workers, 1)
 	fi, err := os.Lstat(root)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	found := make(chan string)
 	go func() {
@@ -44,7 +45,13 @@ func Scan(root string, t Targets, workers int) []Candidate {
 	for range workers {
 		wg.Go(func() {
 			for p := range found {
-				if !Vet(root, p, t) {
+				if !vetPath(root, p, t) {
+					continue
+				}
+				if tracked(p) {
+					mu.Lock()
+					kept = append(kept, p)
+					mu.Unlock()
 					continue
 				}
 				m := measure(p)
@@ -63,7 +70,7 @@ func Scan(root string, t Targets, workers int) []Candidate {
 	// one in path order, so sizes don't depend on which worker got there first.
 	slices.SortFunc(results, func(a, b measured) int { return strings.Compare(a.path, b.path) })
 	seen := map[inode]bool{}
-	cands := make([]Candidate, 0, len(results))
+	cands = make([]Candidate, 0, len(results))
 	for _, m := range results {
 		size := m.own
 		for ino, b := range m.shared {
@@ -77,7 +84,8 @@ func Scan(root string, t Targets, workers int) []Candidate {
 	slices.SortFunc(cands, func(a, b Candidate) int {
 		return cmp.Or(cmp.Compare(b.Size, a.Size), strings.Compare(a.Path, b.Path))
 	})
-	return cands
+	slices.Sort(kept)
+	return cands, kept
 }
 
 // find walks root and sends every folder that matches a target. A subfolder
@@ -130,8 +138,14 @@ const IgnoreFile = ".sweepignore"
 // Vet reports whether p is safe to delete right now: strictly inside root,
 // reached without passing through a symlink or a .git / *.app folder, not in
 // or under a folder marked with IgnoreFile, a real directory (not a symlink)
-// on the same volume as root, and still a target.
+// on the same volume as root, still a target, and holding no files that git
+// tracks.
 func Vet(root, p string, t Targets) bool {
+	return vetPath(root, p, t) && !tracked(p)
+}
+
+// vetPath is Vet without the git check.
+func vetPath(root, p string, t Targets) bool {
 	rel, err := filepath.Rel(root, p)
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return false

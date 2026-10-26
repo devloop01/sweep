@@ -16,8 +16,8 @@ func TestRemove(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(fmt.Sprintf("%s/workers=%d", tc.name, w), func(t *testing.T) {
 				tmp, root := build(t, tc.tree...)
-				tg := DefaultLists().Targets(tc.build, tc.deploy)
-				cands := Scan(root, tg, w)
+				tg := targetsFor(t, tc.config)
+				cands := scanned(root, tg, w)
 				deleted, errs := Remove(open(t, root), tg, cands, w)
 				if len(errs) > 0 {
 					t.Fatal(errs)
@@ -43,8 +43,8 @@ func TestRemove(t *testing.T) {
 // A candidate swapped for a symlink between scan and delete is not deleted.
 func TestRemoveRevetsSymlinkedCandidate(t *testing.T) {
 	tmp, root := build(t, "root/a/node_modules/f", "outside/precious/file")
-	tg := DefaultLists().Targets(false, false)
-	cands := Scan(root, tg, 4)
+	tg := DefaultTargets()
+	cands := scanned(root, tg, 4)
 
 	nm := filepath.Join(root, "a/node_modules")
 	must(t, os.RemoveAll(nm))
@@ -62,8 +62,8 @@ func TestRemoveRevetsSymlinkedCandidate(t *testing.T) {
 // A parent swapped for a symlink must not lead the delete outside DIR.
 func TestRemoveRevetsSymlinkedParent(t *testing.T) {
 	tmp, root := build(t, "root/a/node_modules/f", "outside/node_modules/precious")
-	tg := DefaultLists().Targets(false, false)
-	cands := Scan(root, tg, 4)
+	tg := DefaultTargets()
+	cands := scanned(root, tg, 4)
 
 	a := filepath.Join(root, "a")
 	must(t, os.RemoveAll(a))
@@ -79,7 +79,7 @@ func TestRemoveRevetsSymlinkedParent(t *testing.T) {
 func TestRemoveRefusesOutsideRoot(t *testing.T) {
 	tmp, root := build(t, "outside/node_modules/precious", "root/x/")
 	out := filepath.Join(tmp, "outside/node_modules")
-	deleted, _ := Remove(open(t, root), DefaultLists().Targets(false, false), []Candidate{{Path: out}, {Path: root}}, 4)
+	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{{Path: out}, {Path: root}}, 4)
 	if len(deleted) != 0 || !exists(out) || !exists(root) {
 		t.Errorf("deleted %v", deleted)
 	}
@@ -91,8 +91,8 @@ func TestRemoveReportsFailures(t *testing.T) {
 	must(t, os.Chmod(locked, 0o500))
 	t.Cleanup(func() { os.Chmod(locked, 0o755) })
 
-	tg := DefaultLists().Targets(false, false)
-	deleted, errs := Remove(open(t, root), tg, Scan(root, tg, 4), 4)
+	tg := DefaultTargets()
+	deleted, errs := Remove(open(t, root), tg, scanned(root, tg, 4), 4)
 	if len(deleted) != 1 || !strings.HasSuffix(deleted[0].Path, "b/node_modules") {
 		t.Errorf("deleted %v, want only b/node_modules", deleted)
 	}
@@ -121,9 +121,9 @@ func TestRemoveRaceCantLeaveRoot(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			tmp, root := build(t, "root/a/node_modules/f", "outside/node_modules/precious")
-			tg := DefaultLists().Targets(false, false)
+			tg := DefaultTargets()
 			r := open(t, root)
-			cands := Scan(root, tg, 4)
+			cands := scanned(root, tg, 4)
 
 			beforeRemove = func(string) {
 				a := filepath.Join(root, "a")
@@ -157,8 +157,8 @@ func TestOpenRefusesSwappedRoot(t *testing.T) {
 // A .sweepignore added after the scan still protects the folder.
 func TestRemoveHonorsIgnoreAddedAfterScan(t *testing.T) {
 	_, root := build(t, "root/a/node_modules/f", "root/b/node_modules/f")
-	tg := DefaultLists().Targets(false, false)
-	cands := Scan(root, tg, 4)
+	tg := DefaultTargets()
+	cands := scanned(root, tg, 4)
 	must(t, os.WriteFile(filepath.Join(root, "a", IgnoreFile), nil, 0o644))
 
 	deleted, _ := Remove(open(t, root), tg, cands, 4)

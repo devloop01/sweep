@@ -41,6 +41,7 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n -b
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |
 | `internal/sweep/guard.go` | Which folders sweep refuses to run in |
 | `internal/sweep/scan.go` | Walking, matching, sizes, and the re-check before delete (`Vet`) |
+| `internal/sweep/git.go` | Whether a target may hold git-tracked files |
 | `internal/sweep/remove.go` | Deleting the vetted folders through an `os.Root` |
 | `install.sh` | The `curl … \| sh` installer |
 
@@ -59,6 +60,11 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 - **No symlinks.** The walk never follows them, and a symlink or file with a
   target's name is skipped.
 - **Never inside** `.git` folders or `*.app` bundles.
+- **Git-tracked folders are kept.** A target inside a git repo is kept if
+  `git ls-files` lists anything in it (a committed `dist`, scripts in
+  `build`), or if git can't answer: it isn't installed, times out, or the
+  repo is broken. Kept folders are printed. Outside a repo, git isn't run.
+  Checked during the scan and again before deleting.
 - **`.sweepignore`.** A folder containing an entry with this name is never
   entered, and a target containing one is skipped. The walk skips marked
   folders, and the re-check before delete looks for a marker at every level
@@ -80,14 +86,19 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 
 ### Config validation
 
-A user's `targets.conf` extends the built-in lists: each name is added to its
-section, and `!name` removes one. It can only change which folder names count
-as targets. Each entry must be one exact folder name (`parent/child` in
-`[nested]`). Paths, wildcards, spaces, control characters, `.`, `..`, `.git`,
-`*.app` and unknown sections are rejected, and so is a `!name` that isn't in
-the list, so a typo can't silently leave a folder deletable. Any mistake stops
-the run with the line number before scanning. A nested target is dropped when its
-parent is deleted whole, so `--deploy` doesn't list `.vercel/output` twice.
+The built-in `targets.conf` and a user's `~/.config/sweep/targets.conf` use
+the same flat, `.gitignore`-like format. Each line is a folder name or
+`parent/child`; a trailing `/` is ignored. The user's lines add names, and
+`!name` removes one. Paths, a leading `/`, wildcards, spaces, control
+characters, `.`, `..`, `.git` and `*.app` are rejected, and so is a `!name`
+that isn't in the list, so a typo can't silently leave a folder deletable. Any
+mistake stops the run with the line number before scanning. A nested target is
+dropped when its parent is a target too, so adding `.vercel` doesn't list
+`.vercel/output` twice.
+
+What goes in the built-in list: only folders tools regenerate for free.
+Nothing that would make someone set a project up again (`.vercel`,
+`.netlify`, `.wrangler`) is a default.
 
 ## Sizes
 

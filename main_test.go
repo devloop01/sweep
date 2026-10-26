@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -176,7 +177,9 @@ func TestArgs(t *testing.T) {
 		{[]string{filepath.Join(root, "a/keep.txt")}, 1, ""},
 		{[]string{"--dry-run", "--", root}, 0, "Dry run"},
 		{[]string{"--", root, "-n"}, 2, ""}, // after --, -n is a second DIR
-		{[]string{"-n", "-b", "-d", root}, 0, "Dry run"},
+		{[]string{"-n", "-b", root}, 2, ""}, // -b/-d were removed: folders go in the config now
+		{[]string{"--build", root}, 2, ""},
+		{[]string{"--deploy", root}, 2, ""},
 	} {
 		code, out, _ := sweepIn(t, "", false, tc.args...)
 		if code != tc.code || !strings.Contains(out, tc.out) {
@@ -264,7 +267,7 @@ func TestUserConfig(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "a/.cache/x"), 0o755)
 	var o, e bytes.Buffer
 	// Adds .cache to the built-in list and takes .svelte-kit out of it.
-	cfg := writeConfig(t, "[default]\n.cache\n!.svelte-kit\n")
+	cfg := writeConfig(t, ".cache\n!.svelte-kit\n")
 	code := run([]string{"--yes", root}, env{
 		configPath: cfg, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
 	})
@@ -285,7 +288,7 @@ func TestUserConfig(t *testing.T) {
 func TestBadUserConfigDeletesNothing(t *testing.T) {
 	root := fixture(t)
 	var o, e bytes.Buffer
-	cfg := writeConfig(t, "[default]\nnode_modules\nsrc/lib\n")
+	cfg := writeConfig(t, "node_modules\n.cache\nsrc/lib/x\n")
 	code := run([]string{"--yes", root}, env{
 		configPath: cfg, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
 	})
@@ -325,5 +328,27 @@ func TestFolders(t *testing.T) {
 		if got := folders(n); got != want {
 			t.Errorf("folders(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+// Folders kept because of git are named, so a missing dist/ isn't a mystery.
+func TestKeptFoldersAreReported(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	root := fixture(t)
+	os.MkdirAll(filepath.Join(root, "p/dist"), 0o755)
+	os.WriteFile(filepath.Join(root, "p/dist/app.js"), nil, 0o644)
+	for _, args := range [][]string{{"init", "-q"}, {"add", "dist/app.js"}} {
+		if out, err := exec.Command("git", append([]string{"-C", filepath.Join(root, "p")}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	code, out, _ := sweepIn(t, "", false, "-y", root)
+	if code != 0 || !strings.Contains(out, "Keeping p/dist: it may hold files tracked by git") || !strings.Contains(out, "Deleted 3 folders") {
+		t.Errorf("code %d, out:\n%s", code, out)
+	}
+	if _, err := os.Stat(filepath.Join(root, "p/dist/app.js")); err != nil {
+		t.Error("deleted a tracked folder")
 	}
 }

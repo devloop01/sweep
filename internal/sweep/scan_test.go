@@ -15,11 +15,11 @@ import (
 // Fixtures shared by scan_test and remove_test. All paths are relative to
 // a temp dir; the swept DIR is always "root".
 var cases = []struct {
-	name          string
-	build, deploy bool
-	tree          []string // "x/" is a folder, "x -> y" a symlink to y, anything else a file
-	listed        []string // what Scan finds; Remove must delete exactly these
-	kept          []string // must still exist after Remove
+	name   string
+	config string   // user config applied to the built-in list
+	tree   []string // "x/" is a folder, "x -> y" a symlink to y, anything else a file
+	listed []string // what Scan finds; Remove must delete exactly these
+	kept   []string // must still exist after Remove
 }{
 	{
 		name:   "basic",
@@ -59,8 +59,8 @@ var cases = []struct {
 		kept: []string{"root/a/.wrangler/state/db", "root/a/.vercel/project.json", "root/a/.netlify/state.json"},
 	},
 	{
-		name:   "deploy folders deleted with --deploy",
-		deploy: true,
+		name:   "deploy folders deleted when added to the config",
+		config: ".vercel\n.netlify\n.wrangler/\n",
 		tree:   []string{"root/a/.wrangler/state/db", "root/a/.vercel/project.json", "root/a/.netlify/state.json"},
 		listed: []string{"root/a/.wrangler", "root/a/.vercel", "root/a/.netlify"},
 		kept:   []string{"root/a"},
@@ -83,22 +83,23 @@ var cases = []struct {
 		kept:   []string{"root/a"},
 	},
 	{
-		name:   "--deploy lists .vercel once, not .vercel/output too",
-		deploy: true,
+		name:   "adding .vercel lists it once, not .vercel/output too",
+		config: ".vercel\n",
 		tree:   []string{"root/a/.vercel/output/f"},
 		listed: []string{"root/a/.vercel"},
 	},
 	{
-		name: "build folders kept by default",
-		tree: []string{"root/f/build/src/", "root/f/dist/x", "root/f/out/"},
-		kept: []string{"root/f/build/src", "root/f/dist/x", "root/f/out"},
-	},
-	{
-		name:   "build folders deleted with --build",
-		build:  true,
+		name:   "build folders deleted by default",
 		tree:   []string{"root/f/build/src/", "root/f/dist/x", "root/f/out/"},
 		listed: []string{"root/f/build", "root/f/dist", "root/f/out"},
 		kept:   []string{"root/f"},
+	},
+	{
+		name:   "!dist in the config keeps dist folders",
+		config: "!dist\n",
+		tree:   []string{"root/f/build/src/", "root/f/dist/x", "root/f/out/"},
+		listed: []string{"root/f/build", "root/f/out"},
+		kept:   []string{"root/f/dist/x"},
 	},
 	{
 		name:   "odd names",
@@ -160,6 +161,21 @@ func build(t *testing.T, tree ...string) (tmp, root string) {
 	return tmp, root
 }
 
+// scanned is Scan's candidates, for tests that don't care what was kept.
+func scanned(root string, t Targets, workers int) []Candidate {
+	c, _ := Scan(root, t, workers)
+	return c
+}
+
+// targetsFor returns the built-in targets with config applied, as a user's
+// targets.conf would be.
+func targetsFor(t *testing.T, config string) Targets {
+	t.Helper()
+	e, err := parseList(config, defaultEntries())
+	must(t, err)
+	return NewTargets(e)
+}
+
 func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
@@ -195,7 +211,7 @@ func TestScan(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(fmt.Sprintf("%s/workers=%d", tc.name, w), func(t *testing.T) {
 				tmp, root := build(t, tc.tree...)
-				got := rels(t, tmp, Scan(root, DefaultLists().Targets(tc.build, tc.deploy), w))
+				got := rels(t, tmp, scanned(root, targetsFor(t, tc.config), w))
 				if !slices.Equal(got, sorted(tc.listed)) {
 					t.Errorf("listed %q, want %q", got, sorted(tc.listed))
 				}
@@ -214,7 +230,7 @@ func TestScanOrder(t *testing.T) {
 	_, root := build(t, "root/small/node_modules/", "root/big/node_modules/", "root/b/.next/", "root/a/.next/")
 	must(t, os.WriteFile(filepath.Join(root, "big/node_modules/f"), make([]byte, 64<<10), 0o644))
 	var got []string
-	for _, c := range Scan(root, DefaultLists().Targets(false, false), 4) {
+	for _, c := range scanned(root, DefaultTargets(), 4) {
 		got = append(got, strings.TrimPrefix(c.Path, root+"/"))
 	}
 	want := []string{"big/node_modules", "a/.next", "b/.next", "small/node_modules"}
@@ -233,7 +249,7 @@ func TestSizeIsAllocated(t *testing.T) {
 	f.Close()
 	must(t, os.WriteFile(filepath.Join(root, "a/node_modules/real"), make([]byte, 100_000), 0o644))
 
-	c := Scan(root, DefaultLists().Targets(false, false), 4)
+	c := scanned(root, DefaultTargets(), 4)
 	if len(c) != 1 || c[0].Size < 100_000 || c[0].Size > 1<<20 {
 		t.Errorf("got %+v, want one candidate of roughly 100 KB", c)
 	}
@@ -256,7 +272,7 @@ func TestHardLinksCountedOnce(t *testing.T) {
 	}
 	want := blocks(a) + blocks(b) + fileSize
 
-	first := Scan(root, DefaultLists().Targets(false, false), 4)
+	first := scanned(root, DefaultTargets(), 4)
 	var total int64
 	for _, c := range first {
 		total += c.Size
@@ -268,7 +284,7 @@ func TestHardLinksCountedOnce(t *testing.T) {
 		t.Errorf("biggest is %s, want %s", first[0].Path, a)
 	}
 	for range 5 {
-		if again := Scan(root, DefaultLists().Targets(false, false), 4); !slices.Equal(again, first) {
+		if again := scanned(root, DefaultTargets(), 4); !slices.Equal(again, first) {
 			t.Fatalf("sizes not deterministic: %+v vs %+v", again, first)
 		}
 	}
@@ -277,17 +293,17 @@ func TestHardLinksCountedOnce(t *testing.T) {
 func TestVet(t *testing.T) {
 	tmp, root := build(t,
 		"root/a/node_modules/", "root/b/node_modules", "outside/node_modules/",
-		"root/.git/x/node_modules/", "root/X.app/node_modules/", "root/a/src/",
+		"root/g/.git/x/node_modules/", "root/X.app/node_modules/", "root/a/src/",
 		"root/l -> outside", "root/..x/node_modules/",
 	)
-	tg := DefaultLists().Targets(false, false)
+	tg := DefaultTargets()
 	ok := map[string]bool{
 		"root/a/node_modules":          true,
 		"root":                         false, // DIR itself
 		"outside/node_modules":         false, // outside DIR
 		"root/../outside/node_modules": false,
 		"root/b/node_modules":          false, // a file
-		"root/.git/x/node_modules":     false,
+		"root/g/.git/x/node_modules":   false,
 		"root/X.app/node_modules":      false,
 		"root/a/src":                   false, // not a target
 		"root/l/node_modules":          false, // through a symlinked parent
@@ -330,8 +346,8 @@ func TestScanStaysOnVolume(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(share, "proj/node_modules/f"), []byte("remote"), 0o644))
 	mount(t, filepath.Join(root, "b/node_modules/inner"))
 
-	tg := DefaultLists().Targets(false, false)
-	cands := Scan(root, tg, 4)
+	tg := DefaultTargets()
+	cands := scanned(root, tg, 4)
 	if len(cands) != 1 || cands[0].Path != filepath.Join(root, "a/node_modules") {
 		t.Fatalf("listed %+v, want only a/node_modules", cands)
 	}
