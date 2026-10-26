@@ -54,13 +54,6 @@ sweep -n     # dry run: shows what would be deleted, deletes nothing
 sweep        # shows the list, asks once, then deletes
 ```
 
-To leave the projects you're working on alone, skip anything that changed
-recently:
-
-```sh
-sweep --older 30d     # only folders unchanged for 30 days (or 2w for two weeks)
-```
-
 Add `-y` to skip the question. You can also pass a folder instead of using
 `cd`: `sweep -n ~/Documents/Code`.
 

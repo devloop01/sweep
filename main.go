@@ -14,11 +14,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
-	"slices"
-	"strconv"
 	"strings"
 	"syscall"
-	"time"
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
@@ -37,8 +34,6 @@ Usage:
 Flags:
   -n, --dry-run   only list what would be deleted
   -y, --yes       delete without asking
-      --older AGE skip folders changed within AGE, like 30d or 2w, so
-                  projects you're working on are left alone
   -h, --help      show this help
       --version   print the version
 
@@ -113,8 +108,6 @@ func run(args []string, e env) int {
 		fs.BoolVar(f.p, f.long, false, "")
 	}
 	fs.BoolVar(&showVersion, "version", false, "")
-	var older string
-	fs.StringVar(&older, "older", "", "")
 
 	// flag stops at the first positional, so take it and keep parsing to
 	// allow flags after DIR. Everything after "--" is positional.
@@ -149,14 +142,6 @@ func run(args []string, e env) int {
 	dir := "."
 	if len(dirs) == 1 {
 		dir = dirs[0]
-	}
-	var minAge time.Duration
-	if older != "" {
-		var err error
-		if minAge, err = parseAge(older); err != nil {
-			fmt.Fprintf(e.stderr, "sweep: --older: %v\n", err)
-			return 2
-		}
 	}
 	if e.asRoot {
 		// Under sudo both $HOME and the user record can point at root's
@@ -194,22 +179,8 @@ func run(args []string, e env) int {
 	stop := watch(e, &progress, root)
 	cands, kept := sweep.Scan(root, targets, e.workers, &progress)
 	stop()
-	recent := 0
-	if minAge > 0 {
-		cutoff := time.Now().Add(-minAge)
-		cands = slices.DeleteFunc(cands, func(c sweep.Candidate) bool {
-			if c.Modified.After(cutoff) {
-				recent++
-				return true
-			}
-			return false
-		})
-	}
-	// Skipped folders aren't listed, but a dist/ that survives shouldn't be a mystery.
+	// Kept folders aren't listed, but a dist/ that survives shouldn't be a mystery.
 	skipped := func() {
-		if recent > 0 {
-			fmt.Fprintf(e.stdout, "Skipped %s changed in the last %s.\n", folders(recent), older)
-		}
 		if len(kept) > 0 {
 			fmt.Fprintf(e.stdout, "Skipped %s that may hold real files: build folders outside git, or ones git tracks files in.\n", folders(len(kept)))
 		}
@@ -271,18 +242,6 @@ func confirm(e env) bool {
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes"
-}
-
-// parseAge reads an age in days or weeks, like 30d or 2w.
-func parseAge(s string) (time.Duration, error) {
-	units := map[byte]time.Duration{'d': 24 * time.Hour, 'w': 7 * 24 * time.Hour}
-	if len(s) >= 2 {
-		n, err := strconv.Atoi(s[:len(s)-1])
-		if u, ok := units[s[len(s)-1]]; ok && err == nil && n >= 1 && n <= 36500 {
-			return time.Duration(n) * u, nil
-		}
-	}
-	return 0, fmt.Errorf("%q isn't an age; use days or weeks, like 30d or 2w", s)
 }
 
 // folders returns "1 folder" or "n folders".
