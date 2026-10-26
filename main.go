@@ -195,32 +195,41 @@ func run(args []string, e env) int {
 		skipped()
 		return 0
 	}
-	// Paths on the left, sizes right-aligned in one column after the longest
-	// path, kept within the terminal. A longer path isn't cut (it's a list of
-	// what gets deleted); it just pushes its own size along.
+	// A tree of the folders, largest first at every level, with sizes
+	// right-aligned in one column kept within the terminal. A label too long
+	// for it isn't cut (it's a list of what gets deleted); it just pushes its
+	// own size along.
 	paths := make([]string, len(cands))
-	col := len(folders(len(cands)))
+	sizes := make([]int64, len(cands))
 	var total int64
 	for i, c := range cands {
 		rel, _ := filepath.Rel(root, c.Path)
-		paths[i] = printable(rel)
-		col = max(col, utf8.RuneCountInString(paths[i]))
+		paths[i], sizes[i] = printable(rel), c.Size
 		total += c.Size
+	}
+	rows := tree(paths, sizes)
+	col := len(folders(len(cands)))
+	for _, r := range rows {
+		col = max(col, utf8.RuneCountInString(r.label))
 	}
 	width := e.cols
 	if width == 0 {
 		width = 80
 	}
 	col = max(min(col, width-13), 1) // 2 spaces + 10 for the size + 1 spare
-	row := func(label, labelStyle string, size int64, style string) {
+	line := func(label, labelStyle string, size int64, style string) {
 		pad := strings.Repeat(" ", max(col-utf8.RuneCountInString(label), 0))
 		fmt.Fprintf(e.stdout, "%s%s  %s\n", e.paint(labelStyle, label), pad, e.paint(style, fmt.Sprintf("%10s", human(size))))
 	}
-	for i, c := range cands {
-		row(paths[i], "", c.Size, sizeStyle(c.Size))
+	for _, r := range rows {
+		style := "" // a group's total is plain; folders that get deleted are colored by size
+		if r.leaf {
+			style = sizeStyle(r.size)
+		}
+		line(r.label, "", r.size, style)
 	}
 	fmt.Fprintln(e.stdout, strings.Repeat("-", col+12))
-	row(folders(len(cands)), bold, total, bold)
+	line(folders(len(cands)), bold, total, bold)
 	skipped()
 
 	if dryRun {
