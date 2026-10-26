@@ -28,8 +28,10 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "Downloading ${VERSION:-the latest release} of $REPO ..."
 for f in "$ASSET" SHA256SUMS; do
-  curl -fsSL -o "$TMP/$f" "$URL/$f" ||
-    fail "couldn't download $URL/$f. Does that release exist?"
+  # Give up instead of hanging if GitHub stalls; retry brief network errors.
+  curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 --retry-delay 2 \
+    -o "$TMP/$f" "$URL/$f" ||
+    fail "couldn't download $URL/$f. Check your connection, and that the release exists."
 done
 
 (cd "$TMP" && shasum -a 256 -c SHA256SUMS >/dev/null) ||
