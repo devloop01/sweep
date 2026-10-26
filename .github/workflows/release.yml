@@ -1,0 +1,41 @@
+name: release
+
+# Push a tag like v0.4.0 to publish a release. A tag with a "-" (v0.4.0-rc.1)
+# becomes a pre-release, which install.sh and `go install @latest` ignore.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release
+  id-token: write # sign the build attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # make release reads the version from the tag
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: make test
+      - name: Build
+        run: |
+          make release
+          test "$(dist/sweep-darwin-arm64 --version)" = "$GITHUB_REF_NAME"
+          (cd dist && shasum -a 256 sweep-darwin-arm64 > SHA256SUMS)
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/sweep-darwin-arm64
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          [[ "$GITHUB_REF_NAME" == *-* ]] && pre=--prerelease
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes $pre \
+            dist/sweep-darwin-arm64 dist/SHA256SUMS

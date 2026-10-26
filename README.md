@@ -54,6 +54,10 @@ fish_add_path ~/go/bin                                     # fish
 > quarantines it and won't run it. Use one of the commands above instead, and
 > don't disable Gatekeeper.
 
+Release binaries are built by GitHub Actions from the tagged source. To check
+that yours was, run
+`gh attestation verify ~/.local/bin/sweep -R devloop01/sweep`.
+
 ## Upgrade
 
 Run the command you installed with again. It replaces the old binary.
@@ -196,6 +200,17 @@ make release   # dist/sweep-darwin-arm64
 ```
 
 Tests only touch folders under `t.TempDir()`.
+
+**Releasing:** push a tag and GitHub Actions does the rest. It runs the tests,
+builds `sweep-darwin-arm64`, writes `SHA256SUMS`, attests the build and
+publishes the release with generated notes, which you can edit afterwards.
+
+```sh
+git tag -a v0.4.0 -m v0.4.0 && git push origin v0.4.0
+```
+
+A tag with a `-`, like `v0.4.0-rc.1`, becomes a pre-release, which the install
+script and `go install …@latest` ignore. Use one to try a release first.
 
 ## License
 
