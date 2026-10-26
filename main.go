@@ -53,21 +53,23 @@ type env struct {
 	system         []string // refused system roots
 	stdin          io.Reader
 	isTTY          bool   // stdin is a terminal
+	color          bool   // stdout takes ANSI colors
+	live           bool   // stderr is a terminal: show scan progress
 	flushInput     func() // discards type-ahead before the prompt; nil in tests
 	stdout, stderr io.Writer
 	workers        int
 }
 
 func main() {
-	fi, err := os.Stdin.Stat()
-	isTTY := err == nil && fi.Mode()&os.ModeCharDevice != 0
 	if bi, ok := debug.ReadBuildInfo(); ok && version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		version = bi.Main.Version // go install ...@v1.2.3
 	}
 	os.Exit(run(os.Args[1:], env{
 		configPath: configPath(),
 		asRoot:     os.Geteuid() == 0, homes: sweep.Homes(), system: sweep.SystemRoots,
-		stdin: os.Stdin, isTTY: isTTY, flushInput: flushTypeahead,
+		stdin: os.Stdin, isTTY: isTerminal(os.Stdin), flushInput: flushTypeahead,
+		color:  colorOK(isTerminal(os.Stdout), os.Getenv),
+		live:   isTerminal(os.Stderr) && os.Getenv("TERM") != "dumb",
 		stdout: os.Stdout, stderr: os.Stderr,
 		workers: runtime.NumCPU(),
 	}))
@@ -173,7 +175,10 @@ func run(args []string, e env) int {
 		fmt.Fprintf(e.stdout, "Using targets from %s\n", printable(e.configPath))
 	}
 	fmt.Fprintf(e.stdout, "Scanning %s ...\n", printable(root))
-	cands, kept := sweep.Scan(root, targets, e.workers)
+	var progress sweep.Progress
+	stop := watch(e, &progress, root)
+	cands, kept := sweep.Scan(root, targets, e.workers, &progress)
+	stop()
 	// Kept folders aren't listed, but a dist/ that survives shouldn't be a mystery.
 	skipped := func() {
 		if len(kept) > 0 {
@@ -188,10 +193,10 @@ func run(args []string, e env) int {
 	var total int64
 	for _, c := range cands {
 		rel, _ := filepath.Rel(root, c.Path)
-		fmt.Fprintf(e.stdout, "%10s  %s\n", human(c.Size), printable(rel))
+		fmt.Fprintf(e.stdout, "%s  %s\n", e.paint(sizeStyle(c.Size), fmt.Sprintf("%10s", human(c.Size))), printable(rel))
 		total += c.Size
 	}
-	fmt.Fprintf(e.stdout, "----\n%s, %s\n", folders(len(cands)), human(total))
+	fmt.Fprintf(e.stdout, "----\n%s\n", e.paint(bold, folders(len(cands))+", "+human(total)))
 	skipped()
 
 	if dryRun {
@@ -215,7 +220,7 @@ func run(args []string, e env) int {
 		fmt.Fprintf(e.stdout, "Deleted %d of %s, freed about %s.\n", len(deleted), folders(len(cands)), human(freed))
 		return 1
 	}
-	fmt.Fprintf(e.stdout, "Deleted %s, freed about %s.\n", folders(len(deleted)), human(freed))
+	fmt.Fprintln(e.stdout, e.paint(green, fmt.Sprintf("Deleted %s, freed about %s.", folders(len(deleted)), human(freed))))
 	return 0
 }
 

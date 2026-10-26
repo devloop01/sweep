@@ -45,7 +45,7 @@ func TestGitTrackedTargetsAreKept(t *testing.T) {
 	gitRepo(t, proj, "build/tool.sh", ".gitignore")
 
 	tg := DefaultTargets()
-	cands, kept := Scan(root, tg, 4)
+	cands, kept := Scan(root, tg, 4, nil)
 	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/proj/dist", "root/proj/node_modules", "root/proj/out"}) {
 		t.Errorf("listed %q", got)
 	}
@@ -63,7 +63,7 @@ func TestGitTrackedTargetsAreKept(t *testing.T) {
 func TestBuildFoldersOutsideGitAreKept(t *testing.T) {
 	tmp, root := build(t, "root/lib/build/Gruntfile.js", "root/lib/dist/x.js", "root/lib/out/",
 		"root/lib/node_modules/f", "root/lib/.next/f")
-	cands, kept := Scan(root, DefaultTargets(), 4)
+	cands, kept := Scan(root, DefaultTargets(), 4, nil)
 	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/lib/.next", "root/lib/node_modules"}) {
 		t.Errorf("listed %q, want only the caches", got)
 	}
@@ -82,7 +82,7 @@ func TestBuildFoldersOutsideGitAreKept(t *testing.T) {
 func TestUserCanRemoveBuildName(t *testing.T) {
 	tmp, root := build(t, "root/proj/dist/a.js", "root/proj/build/b.js", "root/proj/README")
 	gitRepo(t, filepath.Join(root, "proj"), "README")
-	cands, kept := Scan(root, targetsFor(t, "!dist\n"), 4)
+	cands, kept := Scan(root, targetsFor(t, "!dist\n"), 4, nil)
 	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/proj/build"}) || len(kept) != 0 {
 		t.Errorf("listed %q, kept %+v; want only build", got, kept)
 	}
@@ -112,7 +112,7 @@ func TestWithoutGitFoldersInRepoAreKept(t *testing.T) {
 	gitRepo(t, filepath.Join(root, "proj"), "README")
 	t.Setenv("PATH", t.TempDir()) // no git on PATH
 
-	cands, kept := Scan(root, DefaultTargets(), 4)
+	cands, kept := Scan(root, DefaultTargets(), 4, nil)
 	if len(cands) != 1 || cands[0].Path != filepath.Join(root, "plain/node_modules") {
 		t.Errorf("listed %v, want only plain/node_modules", cands)
 	}

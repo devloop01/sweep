@@ -155,7 +155,7 @@ func build(t *testing.T, tree ...string) (tmp, root string) {
 
 // scanned is Scan's candidates, for tests that don't care what was kept.
 func scanned(root string, t Targets, workers int) []Candidate {
-	c, _ := Scan(root, t, workers)
+	c, _ := Scan(root, t, workers, nil)
 	return c
 }
 
@@ -352,5 +352,15 @@ func TestScanStaysOnVolume(t *testing.T) {
 		if !exists(filepath.Join(root, p)) {
 			t.Errorf("%s was deleted", p)
 		}
+	}
+}
+
+func TestProgressCountsFolders(t *testing.T) {
+	_, root := build(t, "root/a/src/", "root/b/node_modules/f", "root/c/d/e/")
+	var p Progress
+	Scan(root, DefaultTargets(), 4, &p)
+	// root, a, a/src, b, c, c/d, c/d/e: node_modules is matched, not read.
+	if p.Dirs() != 7 || p.Current() == "" {
+		t.Errorf("Dirs() = %d, Current() = %q; want 7 and a folder", p.Dirs(), p.Current())
 	}
 }

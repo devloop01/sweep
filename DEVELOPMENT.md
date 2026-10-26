@@ -37,6 +37,7 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n -b
 | File | What's in it |
 |---|---|
 | `main.go` | Flags, prompt, output and exit codes |
+| `term.go` | Scan status line, colors, terminal checks |
 | `internal/sweep/targets.conf` | Built-in target lists, embedded in the binary |
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |
 | `internal/sweep/guard.go` | Which folders sweep refuses to run in |
@@ -85,7 +86,10 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 - **Prompt.** Only `y`/`yes` proceeds. Piped input cancels unless `--yes` is
   given, and anything typed during the scan is discarded first.
 - **Output.** Control, format and line-separator characters in names print as
-  `?`, so a folder name can't fake the list.
+  `?`, so a folder name can't fake the list. Colors (sizes over 1 GB red,
+  over 100 MB yellow, under 1 MB dim) are used only when stdout is a terminal
+  and `NO_COLOR` isn't set. The scan status line goes to stderr, only when
+  it's a terminal, and is erased before the list prints.
 
 ### Config validation
 

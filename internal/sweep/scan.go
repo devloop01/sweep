@@ -10,8 +10,26 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 )
+
+// Progress lets another goroutine watch a running Scan.
+type Progress struct {
+	dirs    atomic.Int64
+	current atomic.Pointer[string]
+}
+
+// Dirs is how many folders the scan has read so far.
+func (p *Progress) Dirs() int64 { return p.dirs.Load() }
+
+// Current is the folder the scan read most recently, or "".
+func (p *Progress) Current() string {
+	if s := p.current.Load(); s != nil {
+		return *s
+	}
+	return ""
+}
 
 // Candidate is a vetted target folder.
 type Candidate struct {
@@ -25,7 +43,8 @@ type Candidate struct {
 // *.app folders, never crosses onto another volume or mount (like
 // find -xdev), and does not look inside a match. Results are sorted by size
 // (biggest first), then path.
-func Scan(root string, t Targets, workers int) (cands []Candidate, kept []string) {
+// progress may be nil.
+func Scan(root string, t Targets, workers int, progress *Progress) (cands []Candidate, kept []string) {
 	workers = max(workers, 1)
 	fi, err := os.Lstat(root)
 	if err != nil {
@@ -33,7 +52,7 @@ func Scan(root string, t Targets, workers int) (cands []Candidate, kept []string
 	}
 	found := make(chan string)
 	go func() {
-		find(root, dev(fi), t, workers, found)
+		find(root, dev(fi), t, workers, found, progress)
 		close(found)
 	}()
 
@@ -92,11 +111,15 @@ func Scan(root string, t Targets, workers int) (cands []Candidate, kept []string
 // gets its own goroutine while one of the workers slots is free, otherwise
 // it's walked inline, so there are at most workers+1 walkers and nothing
 // ever waits for a slot.
-func find(root string, rootDev uint64, t Targets, workers int, found chan<- string) {
+func find(root string, rootDev uint64, t Targets, workers int, found chan<- string, progress *Progress) {
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var walk func(dir string)
 	walk = func(dir string) {
+		if progress != nil {
+			progress.dirs.Add(1)
+			progress.current.Store(&dir)
+		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			return // ponytail: unreadable folders are skipped silently, like fd
