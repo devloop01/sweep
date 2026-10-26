@@ -53,11 +53,13 @@ type env struct {
 	homes          []string // every path naming the home folder
 	system         []string // refused system roots
 	stdin          io.Reader
-	isTTY          bool   // stdin is a terminal
-	color          bool   // stdout takes ANSI colors
-	cols           int    // stdout's width; 0 when it isn't a terminal
-	live           bool   // stderr is a terminal: show scan progress
-	flushInput     func() // discards type-ahead before the prompt; nil in tests
+	isTTY          bool                               // stdin is a terminal
+	color          bool                               // stdout takes ANSI colors
+	cols           int                                // stdout's width; 0 when it isn't a terminal
+	raw            func() (restore func(), err error) // raw terminal input for the interactive screen; nil in tests
+	size           func() (cols, rows int)            // terminal size for the interactive screen
+	live           bool                               // stderr is a terminal: show scan progress
+	flushInput     func()                             // discards type-ahead before the prompt; nil in tests
 	stdout, stderr io.Writer
 	workers        int
 }
@@ -72,6 +74,8 @@ func main() {
 	}
 	os.Exit(run(os.Args[1:], env{
 		configPath: configPath(), cols: cols,
+		raw:    func() (func(), error) { return makeRaw(os.Stdin) },
+		size:   func() (int, int) { return termSize(os.Stdout) },
 		asRoot: os.Geteuid() == 0, homes: sweep.Homes(), system: sweep.SystemRoots,
 		stdin: os.Stdin, isTTY: isTerminal(os.Stdin), flushInput: flushTypeahead,
 		color:  colorOK(isTerminal(os.Stdout), os.Getenv),
@@ -196,6 +200,12 @@ func run(args []string, e env) int {
 		skipped()
 		return 0
 	}
+	// In a terminal, deleting is interactive: pick folders and delete them
+	// one by one. -n only lists; -y deletes everything without asking.
+	if !dryRun && !yes && e.isTTY && e.cols > 0 {
+		return interactive(e, r, targets, root, cands, len(kept))
+	}
+
 	// Paths on the left, sizes right-aligned in one column after the longest
 	// path, kept within the terminal. A longer path isn't cut (it's a list of
 	// what gets deleted); it just pushes its own size along.

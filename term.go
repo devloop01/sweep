@@ -62,12 +62,18 @@ func status(dirs int64, current string, width int) string {
 
 // termWidth is f's terminal width in columns, or 80.
 func termWidth(f *os.File) int {
+	w, _ := termSize(f)
+	return w
+}
+
+// termSize is f's terminal size in columns and rows, or 80×24.
+func termSize(f *os.File) (cols, rows int) {
 	var ws struct{ rows, cols, x, y uint16 }
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGWINSZ, uintptr(unsafe.Pointer(&ws)))
-	if errno != 0 || ws.cols == 0 {
-		return 80
+	if errno != 0 || ws.cols == 0 || ws.rows == 0 {
+		return 80, 24
 	}
-	return int(ws.cols)
+	return int(ws.cols), int(ws.rows)
 }
 
 const (

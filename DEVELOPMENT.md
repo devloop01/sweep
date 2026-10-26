@@ -38,6 +38,7 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n -b
 |---|---|
 | `main.go` | Flags, prompt, output and exit codes |
 | `term.go` | Scan status line, colors, terminal checks |
+| `tui.go` | The interactive screen: keys, drawing, raw terminal mode |
 | `internal/sweep/targets.conf` | Built-in target lists, embedded in the binary |
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |
 | `internal/sweep/guard.go` | Which folders sweep refuses to run in |
@@ -83,8 +84,15 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
   before the scan, so a folder swapped for a symlink at the last moment can't
   lead outside DIR. Known limit: inside DIR, that race could still redirect a
   delete to another target-named folder in DIR (see `remove.go`).
-- **Prompt.** Only `y`/`yes` proceeds. Piped input cancels unless `--yes` is
-  given, and anything typed during the scan is discarded first.
+- **Interactive screen** (`tui.go`, when stdin and stdout are terminals and
+  neither `-n` nor `-y` is given). Space deletes the highlighted folder at
+  once, through the same `Remove` re-check. The cursor never moves on its
+  own, so a held-down space deletes one folder. Anything typed during the
+  scan is discarded before the screen opens. Deletions run in the
+  background; quitting waits for them. The terminal is restored on every
+  exit (q, Esc, Ctrl-C, the window closing).
+- **Prompt** (stdin a terminal but stdout not). Only `y`/`yes` proceeds.
+  Piped input cancels unless `--yes` is given.
 - **Output.** Control, format and line-separator characters in names print as
   `?`, so a folder name can't fake the list. Colors (sizes over 1 GB red,
   over 100 MB yellow, under 1 MB dim) are used only when stdout is a terminal

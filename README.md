@@ -6,14 +6,14 @@ Free up disk space by deleting `node_modules` and build caches (`.next`,
 ```
 $ cd ~/Documents/Code
 $ sweep
-Scanning /Users/me/Documents/Code ...
-agency/web/node_modules      1.2 GB
-agency/web/.svelte-kit     340.5 MB
-site/.vercel/output         12.0 KB
------------------------------------
-3 folders                    1.5 GB
-Delete all of these? [y/N] y
-Deleted 3 folders, freed about 1.5 GB.
+sweep  3 folders, 1.5 GB
+↑↓ move   space delete   q quit
+
+  agency/web/node_modules               1.2 GB
+> agency/web/.svelte-kit               deleted
+  site/.vercel/output                  12.0 KB
+
+Freed 340.5 MB
 ```
 
 Everything it deletes comes back with `npm install` / `pnpm install` or your
@@ -46,18 +46,26 @@ with the `sha256` shown next to `sweep-darwin-arm64` on the
 
 ## Use
 
-Go to the folder that holds your projects, look first, then clean:
+Go to the folder that holds your projects and run `sweep`:
 
 ```sh
 cd ~/Documents/Code
-sweep -n     # dry run: shows what would be deleted, deletes nothing
-sweep        # shows the list, asks once, then deletes
+sweep
 ```
 
-In a long list, the many tiny folders (under 1 MB each) are shown as one
-line, so the ones that matter stand out. They're still deleted. Add `-y` to
-skip the question. You can also pass a folder instead of using
-`cd`: `sweep -n ~/Documents/Code`.
+Move with ↑/↓ (or j/k), press **space to delete** the highlighted folder
+right away, and `q` to quit. Folders are listed biggest first.
+
+To just look, or to clean everything at once:
+
+```sh
+sweep -n     # only print the list, delete nothing
+sweep -y     # delete everything in the list, no questions
+```
+
+In a long printed list, the many tiny folders (under 1 MB each) are shown as
+one line, so the ones that matter stand out. You can also pass a folder
+instead of using `cd`: `sweep -n ~/Documents/Code`.
 
 ## What gets deleted
 
