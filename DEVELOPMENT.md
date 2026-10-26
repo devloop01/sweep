@@ -59,6 +59,10 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 - **No symlinks.** The walk never follows them, and a symlink or file with a
   target's name is skipped.
 - **Never inside** `.git` folders or `*.app` bundles.
+- **`.sweepignore`.** A folder containing an entry with this name is never
+  entered, and a target containing one is skipped. The walk skips marked
+  folders, and the re-check before delete looks for a marker at every level
+  from DIR down, so a marker added after the scan still counts.
 - **One volume.** The walk doesn't cross mount points, and a target with
   anything mounted inside it is skipped.
 - **Prune on match.** sweep never looks inside a folder it already matched, so

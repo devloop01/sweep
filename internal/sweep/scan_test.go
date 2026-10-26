@@ -111,6 +111,28 @@ var cases = []struct {
 		tree:   []string{"root/node_modules/x/node_modules/f"},
 		listed: []string{"root/node_modules"},
 	},
+	{
+		name:   ".sweepignore keeps a folder and everything in it",
+		tree:   []string{"root/proj/.sweepignore", "root/proj/node_modules/f", "root/proj/sub/.next/", "root/other/node_modules/"},
+		listed: []string{"root/other/node_modules"},
+		kept:   []string{"root/proj/node_modules/f", "root/proj/sub/.next"},
+	},
+	{
+		name: ".sweepignore can be a folder too",
+		tree: []string{"root/proj/.sweepignore/", "root/proj/node_modules/f"},
+		kept: []string{"root/proj/node_modules/f"},
+	},
+	{
+		name:   ".sweepignore inside a target keeps that target",
+		tree:   []string{"root/a/node_modules/.sweepignore", "root/b/.next/"},
+		listed: []string{"root/b/.next"},
+		kept:   []string{"root/a/node_modules/.sweepignore"},
+	},
+	{
+		name: ".sweepignore in DIR keeps everything",
+		tree: []string{"root/.sweepignore", "root/a/node_modules/f"},
+		kept: []string{"root/a/node_modules/f"},
+	},
 }
 
 // build creates entries under tmp and returns the resolved tmp and root.

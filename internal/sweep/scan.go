@@ -93,6 +93,9 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- stri
 		if err != nil {
 			return // ponytail: unreadable folders are skipped silently, like fd
 		}
+		if slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == IgnoreFile }) {
+			return // the user marked this folder: never look inside
+		}
 		for _, e := range entries {
 			// DirEntry types come from lstat: a symlink to a folder is not a dir here.
 			if !e.IsDir() || e.Name() == ".git" || isApp(e.Name()) {
@@ -121,18 +124,30 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- stri
 	wg.Wait()
 }
 
+// IgnoreFile marks a folder sweep must never look inside.
+const IgnoreFile = ".sweepignore"
+
 // Vet reports whether p is safe to delete right now: strictly inside root,
-// reached without passing through a symlink or a .git / *.app folder, a real
-// directory (not a symlink) on the same volume as root, and still a target.
+// reached without passing through a symlink or a .git / *.app folder, not in
+// or under a folder marked with IgnoreFile, a real directory (not a symlink)
+// on the same volume as root, and still a target.
 func Vet(root, p string, t Targets) bool {
 	rel, err := filepath.Rel(root, p)
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 		return false
 	}
+	dir := root
 	for _, c := range components(rel) {
 		if c == ".git" || isApp(c) {
 			return false
 		}
+		dir = filepath.Join(dir, c)
+		if _, err := os.Lstat(filepath.Join(dir, IgnoreFile)); err == nil {
+			return false
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, IgnoreFile)); err == nil {
+		return false
 	}
 	// Lstat only checks p itself; a parent swapped for a symlink would
 	// otherwise lead outside root.

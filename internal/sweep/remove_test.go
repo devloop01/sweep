@@ -153,3 +153,19 @@ func TestOpenRefusesSwappedRoot(t *testing.T) {
 		t.Error("Open followed a root swapped for a symlink")
 	}
 }
+
+// A .sweepignore added after the scan still protects the folder.
+func TestRemoveHonorsIgnoreAddedAfterScan(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/f", "root/b/node_modules/f")
+	tg := DefaultLists().Targets(false, false)
+	cands := Scan(root, tg, 4)
+	must(t, os.WriteFile(filepath.Join(root, "a", IgnoreFile), nil, 0o644))
+
+	deleted, _ := Remove(open(t, root), tg, cands, 4)
+	if len(deleted) != 1 || !strings.HasSuffix(deleted[0].Path, "b/node_modules") {
+		t.Errorf("deleted %v, want only b/node_modules", deleted)
+	}
+	if !exists(filepath.Join(root, "a/node_modules/f")) {
+		t.Error("deleted a folder marked after the scan")
+	}
+}

@@ -90,6 +90,16 @@ want in it. Sections you leave out stay as they are. The sections are
 [built-in lists](internal/sweep/targets.conf) for all of them. If the file has
 a mistake, sweep tells you the line and doesn't run.
 
+## Skip a folder
+
+To keep sweep out of a folder, put an empty `.sweepignore` file in it:
+
+```sh
+touch ~/Documents/Code/my-project/.sweepignore
+```
+
+sweep won't look inside that folder at all, so nothing in it is ever deleted.
+
 ## Is it safe?
 
 sweep only deletes folders with the names above, and always shows you the
