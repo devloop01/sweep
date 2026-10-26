@@ -127,3 +127,7 @@ make release   # dist/sweep-darwin-arm64
 ```
 
 Tests only touch folders under `t.TempDir()`.
+
+## License
+
+[MIT](LICENSE)
