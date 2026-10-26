@@ -1,5 +1,7 @@
 # sweep
 
+[![test](https://github.com/devloop01/sweep/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/devloop01/sweep/actions/workflows/test.yml)
+
 Find and delete `node_modules` and framework build/cache folders (`.svelte-kit`,
 `.next`, `.turbo`, …) under a directory. Lists them biggest first with a total,
 asks once, then deletes them all.
