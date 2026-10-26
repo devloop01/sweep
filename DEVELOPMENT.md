@@ -38,7 +38,6 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n -b
 |---|---|
 | `main.go` | Flags, prompt, output and exit codes |
 | `term.go` | Scan status line, colors, terminal checks |
-| `tree.go` | Laying out the results as a tree |
 | `internal/sweep/targets.conf` | Built-in target lists, embedded in the binary |
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |
 | `internal/sweep/guard.go` | Which folders sweep refuses to run in |
