@@ -54,8 +54,32 @@ fish_add_path ~/go/bin                                     # fish
 > quarantines it and won't run it. Use one of the commands above instead, and
 > don't disable Gatekeeper.
 
-To update, run the install command again. To uninstall, delete
-`~/go/bin/sweep` or `~/.local/bin/sweep`.
+## Upgrade
+
+Run the command you installed with again. It replaces the old binary.
+
+```sh
+go install github.com/devloop01/sweep@latest                                    # installed with Go
+curl -fsSL https://raw.githubusercontent.com/devloop01/sweep/main/install.sh | sh  # installed with the script
+sweep --version
+```
+
+Not sure which you used? Run `which sweep`: `~/go/bin/sweep` means Go,
+`~/.local/bin/sweep` means the script.
+
+## Uninstall
+
+sweep is a single file and keeps no settings or caches, so removing the binary
+removes everything:
+
+```sh
+rm "$(which sweep)"
+```
+
+If you added `~/go/bin` or `~/.local/bin` to your PATH only for sweep, you can
+also delete that line from `~/.zprofile` (zsh) or run
+`set -U fish_user_paths (string match -v ~/go/bin $fish_user_paths)` (fish,
+with the folder you added).
 
 ## Usage
 
