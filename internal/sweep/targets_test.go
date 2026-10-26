@@ -15,7 +15,7 @@ import (
 func TestDefaultLists(t *testing.T) {
 	want := Lists{
 		Default: []string{"node_modules", ".svelte-kit", ".turbo", ".next", ".nuxt", ".output", ".astro", ".vite",
-			".parcel-cache", ".angular", ".docusaurus", ".nx", "storybook-static"},
+			".parcel-cache", ".angular", ".docusaurus", ".nx", ".vinxi", "storybook-static"},
 		Nested: []string{".vercel/output"},
 		Build:  []string{"dist", "build", "out"},
 		Deploy: []string{".vercel", ".netlify", ".wrangler"},

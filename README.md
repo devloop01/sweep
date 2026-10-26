@@ -67,7 +67,7 @@ You can also pass a folder instead of using `cd`: `sweep -n ~/Documents/Code`.
 
 | | |
 |---|---|
-| **Always** | `node_modules` `.next` `.svelte-kit` `.turbo` `.nuxt` `.output` `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `storybook-static`, and `.vercel/output` |
+| **Always** | `node_modules` `.next` `.svelte-kit` `.turbo` `.nuxt` `.output` `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `.vinxi` `storybook-static`, and `.vercel/output` |
 | **With `--build`** | `dist` `build` `out`. Some projects keep real files in these, so check the list first. |
 | **With `--deploy`** | `.vercel` `.netlify` `.wrangler`. You'll need to run `vercel link` again, and local Cloudflare dev data (D1, KV, R2) is lost. |
 
