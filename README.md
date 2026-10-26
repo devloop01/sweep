@@ -1,10 +1,7 @@
 # sweep
 
-[![test](https://github.com/devloop01/sweep/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/devloop01/sweep/actions/workflows/test.yml)
-
-Free up disk space by deleting `node_modules` and framework build caches
-(`.next`, `.svelte-kit`, `.turbo`, …) across all your projects at once.
-sweep lists what it found, biggest first, asks once, then deletes.
+Free up disk space by deleting `node_modules` and build caches (`.next`,
+`.svelte-kit`, `.turbo`, …) from all your projects at once.
 
 ```
 $ cd ~/Documents/Code
@@ -19,199 +16,95 @@ Delete all of these? [y/N] y
 Deleted 3 folders, freed about 1.5 GB.
 ```
 
-Everything it deletes by default comes back with `npm install` / `pnpm install`
-or your next dev or build run.
+Everything it deletes comes back with `npm install` / `pnpm install` or your
+next dev or build run.
 
 ## Install
 
 For Apple Silicon Macs.
 
-**With Go** (1.27 or later):
-
-```sh
-go install github.com/devloop01/sweep@latest
-```
-
-**Without Go:**
-
 ```sh
 curl -fsSL https://raw.githubusercontent.com/devloop01/sweep/main/install.sh | sh
 ```
 
-The script downloads the binary from the latest release, checks its checksum,
-and installs it to `~/.local/bin`. For a specific release use
-`… | sh -s -- v0.2.0`; for another folder, `… | SWEEP_INSTALL_DIR=/some/dir sh`.
+Or, if you have Go: `go install github.com/devloop01/sweep@latest`
 
-If `sweep` isn't found afterwards, add `~/go/bin` (Go) or `~/.local/bin`
-(script) to your PATH and open a new terminal:
+If your terminal then says `sweep: command not found`, add the install folder
+to your PATH and open a new terminal:
 
 ```sh
-echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile   # zsh
-fish_add_path ~/go/bin                                     # fish
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile   # use ~/go/bin if you installed with Go
 ```
 
-> The binary isn't signed by Apple. If you download it with a browser, macOS
-> quarantines it and won't run it. Use one of the commands above instead, and
-> don't disable Gatekeeper.
+Please don't download the binary with your browser: macOS will block it,
+because it isn't signed by Apple.
 
-Release binaries are built by GitHub Actions from the tagged source. To check
-that yours was, run
-`gh attestation verify ~/.local/bin/sweep -R devloop01/sweep`.
+## Use
 
-## Upgrade
-
-Run the command you installed with again. It replaces the old binary.
-
-```sh
-go install github.com/devloop01/sweep@latest                                    # installed with Go
-curl -fsSL https://raw.githubusercontent.com/devloop01/sweep/main/install.sh | sh  # installed with the script
-sweep --version
-```
-
-Not sure which you used? Run `which sweep`: `~/go/bin/sweep` means Go,
-`~/.local/bin/sweep` means the script.
-
-## Uninstall
-
-sweep is a single file and keeps no settings or caches, so removing the binary
-removes everything:
-
-```sh
-rm "$(which sweep)"
-```
-
-If you added `~/go/bin` or `~/.local/bin` to your PATH only for sweep, you can
-also delete that line from `~/.zprofile` (zsh) or run
-`set -U fish_user_paths (string match -v ~/go/bin $fish_user_paths)` (fish,
-with the folder you added).
-
-## Usage
-
-Run it inside the folder that holds your projects. Start with a dry run:
+Go to the folder that holds your projects, look first, then clean:
 
 ```sh
 cd ~/Documents/Code
-sweep -n        # show what would be deleted, delete nothing
-sweep           # show, ask, delete
+sweep -n     # dry run: shows what would be deleted, deletes nothing
+sweep        # shows the list, asks once, then deletes
 ```
 
-```
-sweep [flags] [DIR]    DIR defaults to the current folder
+| Flag | What it does |
+|---|---|
+| `-n`, `--dry-run` | Only show what would be deleted |
+| `-y`, `--yes` | Delete without asking |
+| `-b`, `--build` | Also delete `dist`, `build` and `out` folders |
+| `-d`, `--deploy` | Also delete `.vercel`, `.netlify` and `.wrangler` folders |
 
--n, --dry-run   only list what would be deleted
--y, --yes       delete without asking
--b, --build     also delete dist/ build/ out/
--d, --deploy    also delete .vercel .netlify .wrangler
--h, --help      show help
-    --version   print the version
-```
-
-Only `y` or `yes` at the prompt deletes. Anything else cancels, and so does
-piped input unless you pass `--yes`.
+You can also pass a folder instead of using `cd`: `sweep -n ~/Documents/Code`.
 
 ## What gets deleted
 
-| | Folders |
+| | |
 |---|---|
-| **Always** | `node_modules` `.svelte-kit` `.turbo` `.next` `.nuxt` `.output` `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `storybook-static`, and `.vercel/output` (the rest of `.vercel` is kept) |
-| **`--build`** | `dist` `build` `out`. Opt-in because some projects commit these or keep real files in them. |
-| **`--deploy`** | All of `.vercel` `.netlify` `.wrangler`. Opt-in because they aren't just cache: you'll need `vercel link` again, and local D1/KV/R2/Durable Objects data in `.wrangler/state` is lost. |
-
-These are the built-in lists, from
-[`internal/sweep/targets.conf`](internal/sweep/targets.conf). You can change
-them; see [Customize](#customize).
+| **Always** | `node_modules` `.next` `.svelte-kit` `.turbo` `.nuxt` `.output` `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `storybook-static`, and `.vercel/output` |
+| **With `--build`** | `dist` `build` `out`. Some projects keep real files in these, so check the list first. |
+| **With `--deploy`** | `.vercel` `.netlify` `.wrangler`. You'll need to run `vercel link` again, and local Cloudflare dev data (D1, KV, R2) is lost. |
 
 ## Customize
 
-To change which folders sweep targets, create `~/.config/sweep/targets.conf`
-(or `$XDG_CONFIG_HOME/sweep/targets.conf`). It uses the same format as the
-[built-in file](internal/sweep/targets.conf):
+To choose your own folders, create `~/.config/sweep/targets.conf`. For
+example, to also delete `.cache` folders with `--build`:
 
 ```
-# The built-in list, minus .output, plus .cache
-[default]
-node_modules
-.svelte-kit
-.turbo
-.next
-.nuxt
-.astro
-.vite
-.parcel-cache
-.angular
-.docusaurus
-.nx
-storybook-static
+[build]
+dist
+build
+out
 .cache
-
-# Don't touch .vercel/output
-[nested]
 ```
 
-- Each `[section]` you include **replaces** that built-in list. Sections you
-  leave out keep the defaults, so include only the ones you want to change.
-  An empty section means "none".
-- The sections are `[default]` (always), `[nested]` (always, written
-  `parent/child`, deletes only the child), `[build]` (with `--build`) and
-  `[deploy]` (with `--deploy`).
-- One exact folder name per line, matched case-sensitively. Paths, wildcards,
-  spaces, `.`, `..`, `.git` and `*.app` are rejected. A mistake stops sweep
-  with the line number before it scans anything.
-- When your file is in use, sweep prints `Using targets from …`, so you always
-  know which lists a run used.
+A section you write replaces that built-in list, so list everything you
+want in it. Sections you leave out stay as they are. The sections are
+`[default]`, `[build]`, `[deploy]` and `[nested]`; see the
+[built-in lists](internal/sweep/targets.conf) for all of them. If the file has
+a mistake, sweep tells you the line and doesn't run.
 
-The config only changes which folder names count as targets. None of the
-safety rules below can be changed, and sweep still shows the list and asks
-before deleting.
+## Is it safe?
 
-## Safety
+sweep only deletes folders with the names above, and always shows you the
+list first. It also:
 
-sweep deletes folders, so it errs on the side of skipping them.
+- won't run in your home folder, `~/Library`, system folders, or with `sudo`
+- never follows shortcuts (symlinks), and never touches `.git` folders or apps
+- stays on your Mac's drive: it won't go into network shares or USB drives
+  mounted inside the folder
 
-- **It won't run in** your home folder or any folder above it, `~/Library`,
-  `~/Applications`, hidden folders in your home (`~/.nvm`, `~/.vscode`, …),
-  system folders (`/System`, `/Library`, `/usr`, `/opt`, `/private`, which
-  covers `/tmp`), `/Volumes` itself, or inside an `.app`. It also refuses to
-  run as root (`sudo`).
-- **It never follows symlinks.** A symlink named `node_modules` is skipped,
-  and so is a file with a target's name.
-- **It skips `.git` folders and `.app` bundles.** Electron apps ship their own
-  `node_modules`. This also skips a project folder named like `acme.app`.
-- **It stays on one drive.** Network shares, disk images and other volumes
-  mounted inside the folder are left alone.
-- **It checks every folder again right before deleting it.** Deletion can't
-  leave the folder you started in, even if something is swapped for a symlink
-  at the last moment.
-- **It ignores anything you type while it's scanning**, so an early `y` can't
-  confirm a list you haven't seen.
+Sizes are real disk usage. With pnpm, the freed space can be smaller than
+shown, because pnpm keeps a shared copy of every package.
 
-## Sizes
+## Upgrade or uninstall
 
-Sizes are actual disk usage, like `du`, and a hard-linked file is counted
-once. With pnpm, `node_modules` is mostly hard links into pnpm's store, which
-keeps the files, so the space freed can be much lower than the size shown.
+- **Upgrade:** run the install command again.
+- **Uninstall:** `rm "$(which sweep)"`. sweep is a single file and leaves
+  nothing else behind.
 
-## Development
+---
 
-```sh
-make test      # go vet + go test -race
-make build     # ./bin/sweep
-make release   # dist/sweep-darwin-arm64
-```
-
-Tests only touch folders under `t.TempDir()`.
-
-**Releasing:** push a tag and GitHub Actions does the rest. It runs the tests,
-builds `sweep-darwin-arm64`, writes `SHA256SUMS`, attests the build and
-publishes the release with generated notes, which you can edit afterwards.
-
-```sh
-git tag -a v0.4.0 -m v0.4.0 && git push origin v0.4.0
-```
-
-A tag with a `-`, like `v0.4.0-rc.1`, becomes a pre-release, which the install
-script and `go install …@latest` ignore. Use one to try a release first.
-
-## License
-
-[MIT](LICENSE)
+Working on sweep itself? See [DEVELOPMENT.md](DEVELOPMENT.md).
+[MIT License](LICENSE).
