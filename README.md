@@ -39,6 +39,11 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zprofile   # use ~/go/bin if y
 Please don't download the binary with your browser: macOS will block it,
 because it isn't signed by Apple.
 
+The installer checks the download for you and prints its checksum. To check
+a copy it installed later on, run `shasum -a 256 "$(which sweep)"` and compare it
+with the `sha256` shown next to `sweep-darwin-arm64` on the
+[release page](https://github.com/devloop01/sweep/releases/latest).
+
 ## Use
 
 Go to the folder that holds your projects, look first, then clean:

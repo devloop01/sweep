@@ -36,6 +36,8 @@ done
 
 (cd "$TMP" && shasum -a 256 -c SHA256SUMS >/dev/null) ||
   fail "checksum mismatch: the download is corrupt. Nothing was installed."
+# Same value GitHub shows next to the file on the release page.
+echo "Checksum OK: sha256:$(shasum -a 256 "$TMP/$ASSET" | cut -d' ' -f1)"
 
 chmod +x "$TMP/$ASSET"
 mkdir -p "$DIR"
