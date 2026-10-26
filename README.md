@@ -22,6 +22,9 @@ Deleted 3 folders, freed about 1.5 GB.
 
 ## Install
 
+macOS only (Apple Silicon and Intel). Building for any other OS fails with
+"build constraints exclude all Go files".
+
 **Recommended:** build it locally with Go 1.27+:
 
 ```sh

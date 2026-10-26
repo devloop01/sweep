@@ -1,3 +1,5 @@
+//go:build darwin
+
 // sweep finds and deletes node_modules and framework build/cache folders
 // (.svelte-kit, .turbo, .next, ...) under a directory.
 package main
