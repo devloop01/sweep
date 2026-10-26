@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // Progress lets another goroutine watch a running Scan.
@@ -33,8 +34,9 @@ func (p *Progress) Current() string {
 
 // Candidate is a vetted target folder.
 type Candidate struct {
-	Path string // absolute
-	Size int64  // allocated bytes, like du; each hard-linked file counted once per run
+	Path     string    // absolute
+	Size     int64     // allocated bytes, like du; each hard-linked file counted once per run
+	Modified time.Time // newest change to anything inside, folders included
 }
 
 // Scan finds the target folders under root, which must already be resolved
@@ -98,7 +100,7 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 				size += b
 			}
 		}
-		cands = append(cands, Candidate{Path: m.path, Size: size})
+		cands = append(cands, Candidate{Path: m.path, Size: size, Modified: m.newest})
 	}
 	slices.SortFunc(cands, func(a, b Candidate) int {
 		return cmp.Or(cmp.Compare(b.Size, a.Size), strings.Compare(a.Path, b.Path))
@@ -211,6 +213,7 @@ type measured struct {
 	own     int64           // blocks of everything not hard-linked
 	shared  map[inode]int64 // blocks of hard-linked files, by inode
 	otherFS bool            // something inside is on another volume
+	newest  time.Time       // latest modification time inside
 }
 
 // measure adds up allocated blocks under p like `du -sk`, without
@@ -234,6 +237,9 @@ func measure(p string) measured {
 		if uint64(st.Dev) != pDev {
 			m.otherFS = true
 			return filepath.SkipAll
+		}
+		if mt := info.ModTime(); mt.After(m.newest) {
+			m.newest = mt
 		}
 		b := st.Blocks * 512
 		if !d.IsDir() && st.Nlink > 1 {

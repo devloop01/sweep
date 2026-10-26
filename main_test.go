@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fixture makes a temp DIR with two targets and a file that must survive.
@@ -350,5 +351,63 @@ func TestKeptFoldersAreReported(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "p/dist/app.js")); err != nil {
 		t.Error("deleted a tracked folder")
+	}
+}
+
+func TestParseAge(t *testing.T) {
+	for in, want := range map[string]time.Duration{"1d": 24 * time.Hour, "30d": 30 * 24 * time.Hour, "2w": 14 * 24 * time.Hour} {
+		if got, err := parseAge(in); err != nil || got != want {
+			t.Errorf("parseAge(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"", "30", "d", "0d", "-3d", "1.5d", "30m", "3h", "2y", "99999d", "d30"} {
+		if _, err := parseAge(bad); err == nil {
+			t.Errorf("parseAge(%q) succeeded", bad)
+		}
+	}
+}
+
+// age sets the modification time of dir and everything in it.
+func age(t *testing.T, dir string, d time.Duration) {
+	t.Helper()
+	when := time.Now().Add(-d)
+	filepath.WalkDir(dir, func(p string, _ os.DirEntry, err error) error {
+		if err == nil {
+			err = os.Chtimes(p, when, when)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return nil
+	})
+}
+
+// --older leaves folders that changed recently alone and says how many.
+func TestOlderSkipsRecentFolders(t *testing.T) {
+	root := fixture(t)
+	age(t, filepath.Join(root, "a/node_modules"), 60*24*time.Hour)
+
+	code, out, _ := sweepIn(t, "", false, root, "--older", "30d", "-n")
+	if code != 0 || !strings.Contains(out, "a/node_modules") || strings.Contains(out, ".svelte-kit") ||
+		!strings.Contains(out, "1 folder,") || !strings.Contains(out, "Skipped 2 folders changed in the last 30d.") {
+		t.Errorf("code %d, out:\n%s", code, out)
+	}
+
+	code, out, _ = sweepIn(t, "", false, "--older=30d", "-y", root)
+	if code != 0 || targetsLeft(root) != 2 || !strings.Contains(out, "Deleted 1 folder,") {
+		t.Errorf("code %d, left %d, out:\n%s", code, targetsLeft(root), out)
+	}
+
+	code, out, _ = sweepIn(t, "", false, "--older", "90d", "-y", root)
+	if code != 0 || targetsLeft(root) != 2 || !strings.Contains(out, "Nothing to clean.") || !strings.Contains(out, "Skipped 2 folders changed in the last 90d.") {
+		t.Errorf("all recent: code %d, out:\n%s", code, out)
+	}
+}
+
+func TestOlderRejectsBadAge(t *testing.T) {
+	root := fixture(t)
+	code, _, errOut := sweepIn(t, "", false, "--older", "30", "-y", root)
+	if code != 2 || !strings.Contains(errOut, "use days or weeks") || targetsLeft(root) != 3 {
+		t.Errorf("code %d, left %d, stderr: %s", code, targetsLeft(root), errOut)
 	}
 }

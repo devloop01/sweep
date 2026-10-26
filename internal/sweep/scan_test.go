@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Fixtures shared by scan_test and remove_test. All paths are relative to
@@ -362,5 +363,23 @@ func TestProgressCountsFolders(t *testing.T) {
 	// root, a, a/src, b, c, c/d, c/d/e: node_modules is matched, not read.
 	if p.Dirs() != 7 || p.Current() == "" {
 		t.Errorf("Dirs() = %d, Current() = %q; want 7 and a folder", p.Dirs(), p.Current())
+	}
+}
+
+// Modified is the newest change anywhere inside, including folders, so a
+// pnpm install (old hard-linked files, new folders) counts as recent.
+func TestModifiedIsNewestInside(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/old/f", "root/a/node_modules/new/")
+	nm := filepath.Join(root, "a/node_modules")
+	old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	recent := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	for _, p := range []string{"old/f", "old", ""} {
+		must(t, os.Chtimes(filepath.Join(nm, p), old, old))
+	}
+	must(t, os.Chtimes(filepath.Join(nm, "new"), recent, recent))
+
+	c := scanned(root, DefaultTargets(), 4)
+	if len(c) != 1 || !c[0].Modified.Equal(recent) {
+		t.Errorf("got %+v, want Modified %v (the newest folder)", c, recent)
 	}
 }
