@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 	"unicode"
@@ -198,14 +199,34 @@ func run(args []string, e env) int {
 	// Paths on the left, sizes right-aligned in one column after the longest
 	// path, kept within the terminal. A longer path isn't cut (it's a list of
 	// what gets deleted); it just pushes its own size along.
-	paths := make([]string, len(cands))
-	col := len(folders(len(cands)))
-	var total int64
+	//
+	// In a long list, folders under 1 MB are folded into one line: they're
+	// most of the rows but hardly any of the space. They're still deleted.
+	shown := len(cands)
+	if len(cands) > 20 {
+		shown = slices.IndexFunc(cands, func(c sweep.Candidate) bool { return c.Size < 1<<20 })
+		if shown < 0 {
+			shown = len(cands)
+		}
+	}
+	paths := make([]string, shown)
+	var total, folded int64
 	for i, c := range cands {
+		total += c.Size
+		if i >= shown {
+			folded += c.Size
+			continue
+		}
 		rel, _ := filepath.Rel(root, c.Path)
 		paths[i] = printable(rel)
-		col = max(col, utf8.RuneCountInString(paths[i]))
-		total += c.Size
+	}
+	foldLabel := "+ " + strings.Replace(folders(len(cands)-shown), "folder", "small folder", 1) + " (under 1 MB each)"
+	col := len(folders(len(cands)))
+	for _, l := range paths {
+		col = max(col, utf8.RuneCountInString(l))
+	}
+	if shown < len(cands) {
+		col = max(col, utf8.RuneCountInString(foldLabel))
 	}
 	width := e.cols
 	if width == 0 {
@@ -216,8 +237,11 @@ func run(args []string, e env) int {
 		pad := strings.Repeat(" ", max(col-utf8.RuneCountInString(label), 0))
 		fmt.Fprintf(e.stdout, "%s%s  %s\n", e.paint(labelStyle, label), pad, e.paint(style, fmt.Sprintf("%10s", human(size))))
 	}
-	for i, c := range cands {
-		row(paths[i], "", c.Size, sizeStyle(c.Size))
+	for i, p := range paths {
+		row(p, "", cands[i].Size, sizeStyle(cands[i].Size))
+	}
+	if shown < len(cands) {
+		row(foldLabel, dim, folded, dim)
 	}
 	fmt.Fprintln(e.stdout, strings.Repeat("-", col+12))
 	row(folders(len(cands)), bold, total, bold)

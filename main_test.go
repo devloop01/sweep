@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -372,5 +373,26 @@ func TestLayoutNarrowTerminal(t *testing.T) {
 	}
 	if l := byPath["e/weird?name/node_modules"]; !strings.HasPrefix(l, "e/weird?name/node_modules  ") {
 		t.Errorf("long path cut or misplaced: %q", l)
+	}
+}
+
+// In a long list, folders under 1 MB fold into one line, but they're still
+// counted and deleted.
+func TestSmallFoldersFoldInLongLists(t *testing.T) {
+	root, _ := filepath.EvalSymlinks(t.TempDir())
+	for i := range 22 {
+		os.MkdirAll(filepath.Join(root, fmt.Sprintf("p%02d/.turbo", i)), 0o755)
+	}
+	os.MkdirAll(filepath.Join(root, "big/node_modules"), 0o755)
+	os.WriteFile(filepath.Join(root, "big/node_modules/f"), make([]byte, 2<<20), 0o644)
+
+	code, out, _ := sweepIn(t, "", false, "-y", root)
+	if code != 0 || !strings.Contains(out, "big/node_modules") || strings.Contains(out, "p00/.turbo") ||
+		!strings.Contains(out, "+ 22 small folders (under 1 MB each)") || !strings.Contains(out, "23 folders  ") ||
+		!strings.Contains(out, "Deleted 23 folders") {
+		t.Errorf("code %d, out:\n%s", code, out)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(root, "p00")); len(entries) != 0 {
+		t.Error("a folded folder wasn't deleted")
 	}
 }

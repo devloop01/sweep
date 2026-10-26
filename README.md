@@ -54,7 +54,9 @@ sweep -n     # dry run: shows what would be deleted, deletes nothing
 sweep        # shows the list, asks once, then deletes
 ```
 
-Add `-y` to skip the question. You can also pass a folder instead of using
+In a long list, the many tiny folders (under 1 MB each) are shown as one
+line, so the ones that matter stand out. They're still deleted. Add `-y` to
+skip the question. You can also pass a folder instead of using
 `cd`: `sweep -n ~/Documents/Code`.
 
 ## What gets deleted

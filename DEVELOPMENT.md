@@ -88,7 +88,8 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 - **Output.** Control, format and line-separator characters in names print as
   `?`, so a folder name can't fake the list. Colors (sizes over 1 GB red,
   over 100 MB yellow, under 1 MB dim) are used only when stdout is a terminal
-  and `NO_COLOR` isn't set. The scan status line goes to stderr, only when
+  and `NO_COLOR` isn't set. With more than 20 folders, those under 1 MB are
+  folded into one counted line; they're still deleted. The scan status line goes to stderr, only when
   it's a terminal, and is erased before the list prints.
 
 ### Config validation
