@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && arm64
 
 package sweep
 
@@ -21,13 +21,18 @@ type Candidate struct {
 
 // Scan finds the target folders under root, which must already be resolved
 // and passed by CheckRoot. It never follows symlinks, never enters .git or
-// *.app folders, and does not look inside a match. Results are sorted by
-// size (biggest first), then path.
+// *.app folders, never crosses onto another volume or mount (like
+// find -xdev), and does not look inside a match. Results are sorted by size
+// (biggest first), then path.
 func Scan(root string, t Targets, workers int) []Candidate {
 	workers = max(workers, 1)
+	fi, err := os.Lstat(root)
+	if err != nil {
+		return nil
+	}
 	found := make(chan string)
 	go func() {
-		find(root, t, workers, found)
+		find(root, dev(fi), t, workers, found)
 		close(found)
 	}()
 
@@ -43,6 +48,9 @@ func Scan(root string, t Targets, workers int) []Candidate {
 					continue
 				}
 				m := measure(p)
+				if m.otherFS {
+					continue // a mount inside the target: deleting would reach into it
+				}
 				mu.Lock()
 				results = append(results, m)
 				mu.Unlock()
@@ -76,7 +84,7 @@ func Scan(root string, t Targets, workers int) []Candidate {
 // gets its own goroutine while one of the workers slots is free, otherwise
 // it's walked inline, so there are at most workers+1 walkers and nothing
 // ever waits for a slot.
-func find(root string, t Targets, workers int, found chan<- string) {
+func find(root string, rootDev uint64, t Targets, workers int, found chan<- string) {
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var walk func(dir string)
@@ -89,6 +97,9 @@ func find(root string, t Targets, workers int, found chan<- string) {
 			// DirEntry types come from lstat: a symlink to a folder is not a dir here.
 			if !e.IsDir() || e.Name() == ".git" || isApp(e.Name()) {
 				continue
+			}
+			if info, err := e.Info(); err != nil || dev(info) != rootDev {
+				continue // a mount point: network share, disk image, other volume
 			}
 			p := filepath.Join(dir, e.Name())
 			if t.Match(p) {
@@ -112,7 +123,7 @@ func find(root string, t Targets, workers int, found chan<- string) {
 
 // Vet reports whether p is safe to delete right now: strictly inside root,
 // reached without passing through a symlink or a .git / *.app folder, a real
-// directory (not a symlink), and still a target.
+// directory (not a symlink) on the same volume as root, and still a target.
 func Vet(root, p string, t Targets) bool {
 	rel, err := filepath.Rel(root, p)
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
@@ -130,21 +141,35 @@ func Vet(root, p string, t Targets) bool {
 		return false
 	}
 	fi, err := os.Lstat(p)
-	return err == nil && fi.IsDir() && t.Match(p)
+	if err != nil || !fi.IsDir() || !t.Match(p) {
+		return false
+	}
+	rfi, err := os.Lstat(root)
+	return err == nil && dev(rfi) == dev(fi)
+}
+
+func dev(fi os.FileInfo) uint64 {
+	return uint64(fi.Sys().(*syscall.Stat_t).Dev)
 }
 
 type inode struct{ dev, ino uint64 }
 
 type measured struct {
-	path   string
-	own    int64           // blocks of everything not hard-linked
-	shared map[inode]int64 // blocks of hard-linked files, by inode
+	path    string
+	own     int64           // blocks of everything not hard-linked
+	shared  map[inode]int64 // blocks of hard-linked files, by inode
+	otherFS bool            // something inside is on another volume
 }
 
 // measure adds up allocated blocks under p like `du -sk`, without
-// following symlinks.
+// following symlinks, and notes whether anything is mounted inside.
 func measure(p string) measured {
 	m := measured{path: p, shared: map[inode]int64{}}
+	fi, err := os.Lstat(p)
+	if err != nil {
+		return m
+	}
+	pDev := dev(fi)
 	filepath.WalkDir(p, func(_ string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // count what can be read
@@ -153,9 +178,10 @@ func measure(p string) measured {
 		if err != nil {
 			return nil
 		}
-		st, ok := info.Sys().(*syscall.Stat_t)
-		if !ok {
-			return nil
+		st := info.Sys().(*syscall.Stat_t)
+		if uint64(st.Dev) != pDev {
+			m.otherFS = true
+			return filepath.SkipAll
 		}
 		b := st.Blocks * 512
 		if !d.IsDir() && st.Nlink > 1 {

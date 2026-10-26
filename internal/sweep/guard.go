@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && arm64
 
 package sweep
 
@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 )
@@ -33,22 +34,48 @@ func Resolve(dir string) (string, error) {
 	return real, nil
 }
 
+// Homes returns every path that names the user's home folder: $HOME and
+// the home macOS has on record, each as given and resolved. $HOME alone
+// can't be trusted: any process can set it.
+func Homes() []string {
+	var raw, homes []string
+	if h := os.Getenv("HOME"); h != "" {
+		raw = append(raw, h)
+	}
+	if u, err := user.Current(); err == nil && u.HomeDir != "" {
+		raw = append(raw, u.HomeDir)
+	}
+	for _, h := range raw {
+		homes = append(homes, filepath.Clean(h))
+		if r, err := filepath.EvalSymlinks(h); err == nil {
+			homes = append(homes, r)
+		}
+	}
+	return homes
+}
+
 // CheckRoot refuses dir (already resolved) when sweeping it could reach
-// system folders, the user's Library, or app bundles. home must be the
-// resolved home folder; system is normally SystemRoots.
+// system folders, the user's Library or tool folders, or app bundles.
+// homes is normally Homes(); system is normally SystemRoots.
 //
 // Paths are compared per component and ignoring case: APFS is
 // case-insensitive and EvalSymlinks keeps the case the user typed, so
 // /USR/local must count as /usr/local.
-func CheckRoot(dir, home string, system []string) error {
-	if !filepath.IsAbs(home) {
+func CheckRoot(dir string, homes, system []string) error {
+	if len(homes) == 0 {
 		return errors.New("cannot determine your home folder, refusing to run")
 	}
-	refused := within(home, dir) || // dir is home, or contains it (this covers "/")
-		within(dir, filepath.Join(home, "Library")) ||
-		within(dir, filepath.Join(home, "Applications")) ||
-		equal(dir, "/Volumes") ||
-		inApp(dir)
+	refused := equal(dir, "/Volumes") || inApp(dir)
+	for _, home := range homes {
+		if !filepath.IsAbs(home) {
+			return fmt.Errorf("home folder %q is not an absolute path, refusing to run", home)
+		}
+		refused = refused ||
+			within(home, dir) || // dir is home, or contains it (this covers "/")
+			within(dir, filepath.Join(home, "Library")) ||
+			within(dir, filepath.Join(home, "Applications")) ||
+			inDotFolder(dir, home)
+	}
 	for _, s := range system {
 		refused = refused || within(dir, s)
 	}
@@ -56,6 +83,14 @@ func CheckRoot(dir, home string, system []string) error {
 		return fmt.Errorf("refusing to run in %s — run it inside a projects folder instead", dir)
 	}
 	return nil
+}
+
+// inDotFolder reports whether dir is inside a hidden folder directly in
+// home, such as ~/.nvm or ~/.vscode: tools keep global installs and editor
+// extensions there, with their own node_modules.
+func inDotFolder(dir, home string) bool {
+	d, h := components(dir), components(home)
+	return within(dir, home) && len(d) > len(h) && strings.HasPrefix(d[len(h)], ".")
 }
 
 // within reports whether path is root or inside it.

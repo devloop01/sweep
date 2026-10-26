@@ -22,7 +22,7 @@ Deleted 3 folders, freed about 1.5 GB.
 
 ## Install
 
-macOS only (Apple Silicon and Intel). Building for any other OS fails with
+Apple Silicon Macs only. Building for Intel Macs or any other OS fails with
 "build constraints exclude all Go files".
 
 **Recommended:** build it locally with Go 1.27+:
@@ -42,10 +42,9 @@ The repo is private, so do this once first:
 It lands in `$(go env GOPATH)/bin`. Because it's built on your machine, macOS
 doesn't quarantine it.
 
-**Prebuilt binary:** `make release` produces `dist/sweep-darwin-arm64` (Apple
-Silicon) and `dist/sweep-darwin-amd64` (Intel). These binaries aren't signed. If
-you download one through a browser or Slack, macOS quarantines it and Gatekeeper
-blocks it. Signing and notarisation need an Apple Developer account, which this
+**Prebuilt binary:** `make release` produces `dist/sweep-darwin-arm64`. It isn't
+signed. If you download it through a browser or Slack, macOS quarantines it and
+Gatekeeper blocks it. Signing and notarisation need an Apple Developer account, which this
 project doesn't use yet. Until then, use `go install`. Don't disable Gatekeeper.
 
 ## Usage
@@ -79,19 +78,31 @@ All target lists are in [`internal/sweep/targets.go`](internal/sweep/targets.go)
 
 ## Safety
 
+- Refuses to run as root (`sudo`).
 - Refuses to run in `/`, your home folder or any folder above it (such as
-  `/Users`), `~/Library`, `~/Applications`, `/System`, `/Applications`,
-  `/Library`, `/opt`, `/usr`, `/private` (this includes `/tmp` and `/var`),
-  `/Volumes` itself, and `*.app` bundles. Paths are compared ignoring case,
-  like APFS does.
+  `/Users`), `~/Library`, `~/Applications`, hidden folders in your home such
+  as `~/.nvm`, `~/.vscode` or `~/.bun` (global installs and editor extensions
+  live there), `/System`, `/Applications`, `/Library`, `/opt`, `/usr`,
+  `/private` (this includes `/tmp` and `/var`), `/Volumes` itself, and `*.app`
+  bundles. Paths are compared ignoring case, like APFS does. "Your home
+  folder" means both `$HOME` and the home folder macOS has on record, since
+  `$HOME` can be changed.
 - Never follows symlinks, and never looks inside `.git` folders or `*.app`
   bundles. Electron apps ship their own `node_modules`. This also means a
   project folder named like a domain, such as `acme.app`, is skipped entirely,
   and refused if you pass it as DIR. Rename it, or clean it by hand.
+- Stays on DIR's volume, like `find -xdev`. A network share, disk image or
+  other volume mounted inside DIR is never swept, and a target with something
+  mounted inside it is skipped.
 - Only real folders are deleted. A symlink or file named `node_modules` is
   skipped.
 - Each folder is checked again right before deletion. It must still be inside
   DIR, reached without going through a symlink, and still a real target folder.
+  The deletion itself goes through a handle to DIR opened before the scan
+  (`os.Root`), so a folder swapped for a symlink at the last moment still can't
+  lead it outside DIR.
+- Anything typed while sweep is scanning is discarded before the prompt, so an
+  early `y` and Enter can't confirm a list you haven't seen.
 
 ## Sizes
 
@@ -106,7 +117,7 @@ lower than the size shown.
 ```sh
 make test      # go vet + go test -race
 make build     # ./bin/sweep
-make release   # dist/sweep-darwin-{arm64,amd64}
+make release   # dist/sweep-darwin-arm64
 ```
 
 Tests only touch folders under `t.TempDir()`.

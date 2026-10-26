@@ -1,10 +1,11 @@
-//go:build darwin
+//go:build darwin && arm64
 
 package sweep
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -274,6 +275,52 @@ func TestVet(t *testing.T) {
 	for rel, want := range ok {
 		if got := Vet(root, filepath.Join(tmp, rel), tg); got != want {
 			t.Errorf("Vet(%q) = %v, want %v", rel, got, want)
+		}
+	}
+}
+
+// mount attaches a small APFS disk image at dir. It's detached before the
+// temp dirs are removed (cleanups run last-in, first-out).
+func mount(t *testing.T, dir string) {
+	t.Helper()
+	img := filepath.Join(t.TempDir(), "vol.dmg")
+	if out, err := exec.Command("hdiutil", "create", "-size", "4m", "-fs", "APFS", "-volname", "sweeptest", img).CombinedOutput(); err != nil {
+		t.Skipf("hdiutil create: %v\n%s", err, out)
+	}
+	must(t, os.MkdirAll(dir, 0o755))
+	if out, err := exec.Command("hdiutil", "attach", "-nobrowse", "-noautoopen", "-mountpoint", dir, img).CombinedOutput(); err != nil {
+		t.Skipf("hdiutil attach: %v\n%s", err, out)
+	}
+	t.Cleanup(func() {
+		if out, err := exec.Command("hdiutil", "detach", "-force", dir).CombinedOutput(); err != nil {
+			t.Errorf("hdiutil detach: %v\n%s", err, out)
+		}
+	})
+}
+
+// Another volume mounted inside DIR (a share, a disk image) is never swept,
+// and neither is a target with something mounted inside it.
+func TestScanStaysOnVolume(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/f", "root/b/node_modules/f")
+	share := filepath.Join(root, "share")
+	mount(t, share)
+	must(t, os.MkdirAll(filepath.Join(share, "proj/node_modules"), 0o755))
+	must(t, os.WriteFile(filepath.Join(share, "proj/node_modules/f"), []byte("remote"), 0o644))
+	mount(t, filepath.Join(root, "b/node_modules/inner"))
+
+	tg := NewTargets(false, false)
+	cands := Scan(root, tg, 4)
+	if len(cands) != 1 || cands[0].Path != filepath.Join(root, "a/node_modules") {
+		t.Fatalf("listed %+v, want only a/node_modules", cands)
+	}
+	if Vet(root, filepath.Join(share, "proj/node_modules"), tg) {
+		t.Error("Vet allowed a folder on another volume")
+	}
+	r := open(t, root)
+	Remove(r, tg, append(cands, Candidate{Path: filepath.Join(share, "proj/node_modules")}), 4)
+	for _, p := range []string{"share/proj/node_modules/f", "b/node_modules/f"} {
+		if !exists(filepath.Join(root, p)) {
+			t.Errorf("%s was deleted", p)
 		}
 	}
 }

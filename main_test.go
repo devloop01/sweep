@@ -1,9 +1,10 @@
-//go:build darwin
+//go:build darwin && arm64
 
 package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,7 +35,7 @@ func sweepIn(t *testing.T, stdin string, tty bool, args ...string) (code int, ou
 	t.Helper()
 	var o, e bytes.Buffer
 	code = run(args, env{
-		home: t.TempDir(), stdin: strings.NewReader(stdin), isTTY: tty,
+		homes: []string{t.TempDir()}, stdin: strings.NewReader(stdin), isTTY: tty,
 		stdout: &o, stderr: &e, workers: 4,
 	})
 	return code, o.String(), e.String()
@@ -135,13 +136,13 @@ func TestNothingToClean(t *testing.T) {
 func TestRefusedRoot(t *testing.T) {
 	root := fixture(t)
 	var o, e bytes.Buffer
-	code := run([]string{"--yes", root}, env{home: root, stdout: &o, stderr: &e, workers: 4})
+	code := run([]string{"--yes", root}, env{homes: []string{root}, stdout: &o, stderr: &e, workers: 4})
 	if code != 1 || !strings.Contains(e.String(), "refusing to run") || targetsLeft(root) != 3 {
 		t.Errorf("code %d, left %d, stderr: %s", code, targetsLeft(root), e.String())
 	}
 	o.Reset()
 	e.Reset()
-	code = run([]string{"--yes", root}, env{home: t.TempDir(), system: []string{filepath.Dir(root)}, stdout: &o, stderr: &e, workers: 4})
+	code = run([]string{"--yes", root}, env{homes: []string{t.TempDir()}, system: []string{filepath.Dir(root)}, stdout: &o, stderr: &e, workers: 4})
 	if code != 1 || targetsLeft(root) != 3 {
 		t.Errorf("system root: code %d, left %d", code, targetsLeft(root))
 	}
@@ -210,5 +211,38 @@ func TestHuman(t *testing.T) {
 		if got := human(b); got != want {
 			t.Errorf("human(%d) = %q, want %q", b, got, want)
 		}
+	}
+}
+
+func TestRefusesRoot(t *testing.T) {
+	root := fixture(t)
+	var o, e bytes.Buffer
+	code := run([]string{"--yes", root}, env{asRoot: true, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4})
+	if code != 1 || !strings.Contains(e.String(), "refusing to run as root") || targetsLeft(root) != 3 {
+		t.Errorf("code %d, left %d, stderr: %s", code, targetsLeft(root), e.String())
+	}
+}
+
+// flushReader records whether input was flushed before the first read.
+type flushReader struct {
+	flushed, flushedFirst bool
+	r                     io.Reader
+}
+
+func (f *flushReader) Read(p []byte) (int, error) {
+	f.flushedFirst = f.flushedFirst || f.flushed
+	return f.r.Read(p)
+}
+
+func TestPromptFlushesTypeahead(t *testing.T) {
+	root := fixture(t)
+	in := &flushReader{r: strings.NewReader("n\n")}
+	var o, e bytes.Buffer
+	run([]string{root}, env{
+		homes: []string{t.TempDir()}, stdin: in, isTTY: true,
+		flushInput: func() { in.flushed = true }, stdout: &o, stderr: &e, workers: 4,
+	})
+	if !in.flushedFirst {
+		t.Error("prompt read input without flushing type-ahead first")
 	}
 }

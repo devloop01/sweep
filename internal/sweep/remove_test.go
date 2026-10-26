@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && arm64
 
 package sweep
 
@@ -18,7 +18,7 @@ func TestRemove(t *testing.T) {
 				tmp, root := build(t, tc.tree...)
 				tg := NewTargets(tc.build, tc.deploy)
 				cands := Scan(root, tg, w)
-				deleted, errs := Remove(root, tg, cands, w)
+				deleted, errs := Remove(open(t, root), tg, cands, w)
 				if len(errs) > 0 {
 					t.Fatal(errs)
 				}
@@ -50,7 +50,7 @@ func TestRemoveRevetsSymlinkedCandidate(t *testing.T) {
 	must(t, os.RemoveAll(nm))
 	must(t, os.Symlink(filepath.Join(tmp, "outside/precious"), nm))
 
-	deleted, errs := Remove(root, tg, cands, 4)
+	deleted, errs := Remove(open(t, root), tg, cands, 4)
 	if len(deleted) != 0 || len(errs) != 0 {
 		t.Errorf("deleted %v, errs %v", deleted, errs)
 	}
@@ -69,7 +69,7 @@ func TestRemoveRevetsSymlinkedParent(t *testing.T) {
 	must(t, os.RemoveAll(a))
 	must(t, os.Symlink(filepath.Join(tmp, "outside"), a))
 
-	deleted, _ := Remove(root, tg, cands, 4)
+	deleted, _ := Remove(open(t, root), tg, cands, 4)
 	if len(deleted) != 0 || !exists(filepath.Join(tmp, "outside/node_modules/precious")) {
 		t.Errorf("deleted outside DIR: %v", deleted)
 	}
@@ -79,7 +79,7 @@ func TestRemoveRevetsSymlinkedParent(t *testing.T) {
 func TestRemoveRefusesOutsideRoot(t *testing.T) {
 	tmp, root := build(t, "outside/node_modules/precious", "root/x/")
 	out := filepath.Join(tmp, "outside/node_modules")
-	deleted, _ := Remove(root, NewTargets(false, false), []Candidate{{Path: out}, {Path: root}}, 4)
+	deleted, _ := Remove(open(t, root), NewTargets(false, false), []Candidate{{Path: out}, {Path: root}}, 4)
 	if len(deleted) != 0 || !exists(out) || !exists(root) {
 		t.Errorf("deleted %v", deleted)
 	}
@@ -92,7 +92,7 @@ func TestRemoveReportsFailures(t *testing.T) {
 	t.Cleanup(func() { os.Chmod(locked, 0o755) })
 
 	tg := NewTargets(false, false)
-	deleted, errs := Remove(root, tg, Scan(root, tg, 4), 4)
+	deleted, errs := Remove(open(t, root), tg, Scan(root, tg, 4), 4)
 	if len(deleted) != 1 || !strings.HasSuffix(deleted[0].Path, "b/node_modules") {
 		t.Errorf("deleted %v, want only b/node_modules", deleted)
 	}
@@ -101,5 +101,55 @@ func TestRemoveReportsFailures(t *testing.T) {
 	}
 	if !exists(filepath.Join(locked, "f")) {
 		t.Error("locked file was deleted")
+	}
+}
+
+func open(t *testing.T, root string) *os.Root {
+	t.Helper()
+	r, err := Open(root)
+	must(t, err)
+	t.Cleanup(func() { r.Close() })
+	return r
+}
+
+// The race Vet can't close: a parent swapped for a symlink after the last
+// Vet but before the delete. Deleting through os.Root must not follow it out.
+func TestRemoveRaceCantLeaveRoot(t *testing.T) {
+	for name, target := range map[string]func(tmp string) string{
+		"absolute symlink": func(tmp string) string { return filepath.Join(tmp, "outside") },
+		"relative symlink": func(string) string { return "../outside" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmp, root := build(t, "root/a/node_modules/f", "outside/node_modules/precious")
+			tg := NewTargets(false, false)
+			r := open(t, root)
+			cands := Scan(root, tg, 4)
+
+			beforeRemove = func(string) {
+				a := filepath.Join(root, "a")
+				must(t, os.RemoveAll(a))
+				must(t, os.Symlink(target(tmp), a))
+			}
+			t.Cleanup(func() { beforeRemove = func(string) {} })
+
+			deleted, errs := Remove(r, tg, cands, 4)
+			if len(deleted) != 0 || len(errs) != 1 {
+				t.Errorf("deleted %v, errs %v; want nothing deleted and one error", deleted, errs)
+			}
+			if !exists(filepath.Join(tmp, "outside/node_modules/precious")) {
+				t.Error("deleted outside DIR")
+			}
+		})
+	}
+}
+
+// Open refuses a root that is no longer the folder that was checked.
+func TestOpenRefusesSwappedRoot(t *testing.T) {
+	tmp, root := build(t, "other/")
+	must(t, os.Remove(root))
+	must(t, os.Symlink(filepath.Join(tmp, "other"), root))
+	if r, err := Open(root); err == nil {
+		r.Close()
+		t.Error("Open followed a root swapped for a symlink")
 	}
 }

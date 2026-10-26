@@ -1,4 +1,4 @@
-//go:build darwin
+//go:build darwin && arm64
 
 // sweep finds and deletes node_modules and framework build/cache folders
 // (.svelte-kit, .turbo, .next, ...) under a directory.
@@ -15,8 +15,10 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
+	"unsafe"
 
 	"github.com/devloop01/sweep/internal/sweep"
 )
@@ -45,32 +47,35 @@ next dev/build run. That includes .vercel/output; the rest of .vercel is kept.
 
 // env is everything run needs from the outside world, so tests can fake it.
 type env struct {
-	home           string   // resolved home folder
+	asRoot         bool
+	homes          []string // every path naming the home folder
 	system         []string // refused system roots
 	stdin          io.Reader
-	isTTY          bool // stdin is a terminal
+	isTTY          bool   // stdin is a terminal
+	flushInput     func() // discards type-ahead before the prompt; nil in tests
 	stdout, stderr io.Writer
 	workers        int
 }
 
 func main() {
-	home, err := os.UserHomeDir()
-	if err == nil {
-		home, err = filepath.EvalSymlinks(home)
-	}
-	if err != nil {
-		home = "" // CheckRoot refuses to run without a home folder
-	}
 	fi, err := os.Stdin.Stat()
 	isTTY := err == nil && fi.Mode()&os.ModeCharDevice != 0
 	if bi, ok := debug.ReadBuildInfo(); ok && version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		version = bi.Main.Version // go install ...@v1.2.3
 	}
 	os.Exit(run(os.Args[1:], env{
-		home: home, system: sweep.SystemRoots,
-		stdin: os.Stdin, isTTY: isTTY, stdout: os.Stdout, stderr: os.Stderr,
+		asRoot: os.Geteuid() == 0, homes: sweep.Homes(), system: sweep.SystemRoots,
+		stdin: os.Stdin, isTTY: isTTY, flushInput: flushTypeahead,
+		stdout: os.Stdout, stderr: os.Stderr,
 		workers: runtime.NumCPU(),
 	}))
+}
+
+// flushTypeahead discards anything typed while scanning, so a "y" and
+// Enter pressed early can't answer the prompt before the list is shown.
+func flushTypeahead() {
+	fread := int32(1) // FREAD from <sys/fcntl.h>: flush input only
+	syscall.Syscall(syscall.SYS_IOCTL, os.Stdin.Fd(), syscall.TIOCFLUSH, uintptr(unsafe.Pointer(&fread)))
 }
 
 func run(args []string, e env) int {
@@ -121,15 +126,26 @@ func run(args []string, e env) int {
 	if len(dirs) == 1 {
 		dir = dirs[0]
 	}
+	if e.asRoot {
+		// Under sudo both $HOME and the user record can point at root's
+		// home, so the home-folder guard can't be trusted.
+		fmt.Fprintln(e.stderr, "sweep: refusing to run as root — run it as yourself, without sudo.")
+		return 1
+	}
 
 	root, err := sweep.Resolve(dir)
 	if err == nil {
-		err = sweep.CheckRoot(root, e.home, e.system)
+		err = sweep.CheckRoot(root, e.homes, e.system)
+	}
+	var r *os.Root
+	if err == nil {
+		r, err = sweep.Open(root) // before scanning: deletion stays in this folder
 	}
 	if err != nil {
 		fmt.Fprintln(e.stderr, "sweep:", printable(err.Error()))
 		return 1
 	}
+	defer r.Close()
 
 	targets := sweep.NewTargets(build, deploy)
 	fmt.Fprintf(e.stdout, "Scanning %s ...\n", printable(root))
@@ -155,7 +171,7 @@ func run(args []string, e env) int {
 		return 0
 	}
 
-	deleted, errs := sweep.Remove(root, targets, cands, e.workers)
+	deleted, errs := sweep.Remove(r, targets, cands, e.workers)
 	var freed int64
 	for _, c := range deleted {
 		freed += c.Size
@@ -178,6 +194,9 @@ func confirm(e env) bool {
 		fmt.Fprintln(e.stdout)
 		fmt.Fprintln(e.stderr, "sweep: stdin is not a terminal; use --yes to delete without asking.")
 		return false
+	}
+	if e.flushInput != nil {
+		e.flushInput()
 	}
 	line, err := bufio.NewReader(e.stdin).ReadString('\n')
 	if err != nil {
@@ -202,11 +221,11 @@ func human(b int64) string {
 }
 
 // printable replaces control and format characters (newlines, bidi
-// overrides, zero-width) and invalid UTF-8 with '?', so a folder name can't
-// spoof the list.
+// overrides, zero-width), line/paragraph separators and invalid UTF-8 with
+// '?', so a folder name can't spoof the list.
 func printable(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == utf8.RuneError || unicode.In(r, unicode.Cc, unicode.Cf) {
+		if r == utf8.RuneError || unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return '?'
 		}
 		return r

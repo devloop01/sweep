@@ -1,21 +1,45 @@
-//go:build darwin
+//go:build darwin && arm64
 
 package sweep
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 )
+
+// Open opens root (already resolved and guarded) for Remove. Open it before
+// scanning: from then on, deletion can't leave this folder even if its path
+// is later swapped for a symlink.
+func Open(root string) (*os.Root, error) {
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	opened, err1 := r.Stat(".")
+	checked, err2 := os.Lstat(root)
+	if err1 != nil || err2 != nil || !os.SameFile(opened, checked) {
+		r.Close()
+		return nil, fmt.Errorf("%s changed while opening it", root)
+	}
+	return r, nil
+}
+
+// beforeRemove lets tests change the tree between the last Vet and the delete.
+var beforeRemove = func(path string) {}
 
 // Remove deletes each candidate that still passes Vet, with up to workers
 // deletions at once. Candidates that no longer pass are dropped silently.
 // It returns the candidates actually deleted (in input order) and one error
 // per failed deletion.
 //
-// ponytail: a swap that lands between Vet and RemoveAll is not caught (a
-// window of a few syscalls). RemoveAll itself never follows symlinks inside
-// the tree. Closing the window needs openat/O_NOFOLLOW removal from root.
-func Remove(root string, t Targets, cands []Candidate, workers int) (deleted []Candidate, errs []error) {
+// Deletion goes through r, so a folder swapped for a symlink after Vet can't
+// lead outside root. ponytail: inside root, Root still follows relative
+// symlinks, so that race could redirect a delete to another folder with a
+// target name within root. Closing it needs O_NOFOLLOW at every level.
+func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Candidate, errs []error) {
+	root := r.Name()
 	done := make([]bool, len(cands))
 	failed := make([]error, len(cands))
 	sem := make(chan struct{}, max(workers, 1))
@@ -27,7 +51,12 @@ func Remove(root string, t Targets, cands []Candidate, workers int) (deleted []C
 			if !Vet(root, c.Path, t) {
 				return
 			}
-			if err := os.RemoveAll(c.Path); err != nil {
+			rel, err := filepath.Rel(root, c.Path)
+			if err != nil {
+				return
+			}
+			beforeRemove(c.Path)
+			if err := r.RemoveAll(rel); err != nil {
 				failed[i] = err
 				return
 			}

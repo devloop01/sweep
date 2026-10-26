@@ -10,6 +10,4 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o bin/sweep .
 
 release:
-	for arch in arm64 amd64; do \
-		CGO_ENABLED=0 GOOS=darwin GOARCH=$$arch go build -ldflags "$(LDFLAGS)" -o dist/sweep-darwin-$$arch . || exit 1; \
-	done
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o dist/sweep-darwin-arm64 .

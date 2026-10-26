@@ -1,16 +1,19 @@
-//go:build darwin
+//go:build darwin && arm64
 
 package sweep
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
 
 func TestCheckRoot(t *testing.T) {
 	const home = "/Users/me"
+	homes := []string{home}
 	refused := []string{
 		"/", "/Users", home, "/USERS/ME", home + "/",
 		home + "/Library", home + "/Library/x", home + "/library/Caches",
@@ -19,9 +22,10 @@ func TestCheckRoot(t *testing.T) {
 		"/Applications", "/Library/Caches", "/opt/homebrew", "/private", "/private/tmp",
 		"/Volumes", "/volumes",
 		"/x/Foo.app", "/x/Foo.APP/Contents", home + "/Code/My.app/Contents/Resources",
+		home + "/.nvm", home + "/.vscode/extensions", home + "/.local/share/pnpm", home + "/.Bun",
 	}
 	for _, dir := range refused {
-		if err := CheckRoot(dir, home, SystemRoots); err == nil {
+		if err := CheckRoot(dir, homes, SystemRoots); err == nil {
 			t.Errorf("CheckRoot(%q) allowed, want refused", dir)
 		}
 	}
@@ -30,14 +34,24 @@ func TestCheckRoot(t *testing.T) {
 		home + "/Libraryfoo", home + "/Applicationsfoo", home + "/Documents/Code",
 		home + "/Code/Library", "/Users/other", "/Volumes/External",
 		"/x/app", "/x/Fooapp", "/x/Foo.apps",
+		home + "/Code/.hidden", home + "/Code/proj/.vscode",
 	}
 	for _, dir := range allowed {
-		if err := CheckRoot(dir, home, SystemRoots); err != nil {
+		if err := CheckRoot(dir, homes, SystemRoots); err != nil {
 			t.Errorf("CheckRoot(%q) refused: %v", dir, err)
 		}
 	}
-	if err := CheckRoot("/Users/me/Code", "", SystemRoots); err == nil {
-		t.Error("CheckRoot with unknown home allowed, want refused")
+	for _, bad := range [][]string{nil, {""}, {home, "relative/home"}} {
+		if err := CheckRoot("/Users/me/Code", bad, SystemRoots); err == nil {
+			t.Errorf("CheckRoot with homes %q allowed, want refused", bad)
+		}
+	}
+	// $HOME overridden (or sudo): the home macOS has on record still counts.
+	both := []string{"/var/root", home}
+	for _, dir := range []string{home, home + "/Library/x", home + "/.nvm"} {
+		if err := CheckRoot(dir, both, SystemRoots); err == nil {
+			t.Errorf("CheckRoot(%q) with homes %q allowed, want refused", dir, both)
+		}
 	}
 }
 
@@ -69,7 +83,7 @@ func TestResolveAndCheck(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return CheckRoot(r, realHome, system)
+		return CheckRoot(r, []string{realHome}, system)
 	}
 	if check(link) == nil {
 		t.Error("symlink to home allowed")
@@ -88,5 +102,19 @@ func TestResolveAndCheck(t *testing.T) {
 	os.WriteFile(file, nil, 0o644)
 	if _, err := Resolve(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Errorf("Resolve of file: %v", err)
+	}
+}
+
+// An overridden $HOME doesn't hide the home macOS has on record.
+func TestHomesIgnoresOverriddenHOME(t *testing.T) {
+	fake := t.TempDir()
+	t.Setenv("HOME", fake)
+	u, err := user.Current()
+	if err != nil {
+		t.Skip("no user record:", err)
+	}
+	homes := Homes()
+	if !slices.Contains(homes, u.HomeDir) || !slices.Contains(homes, filepath.Clean(fake)) {
+		t.Errorf("Homes() = %q, want both %q and %q", homes, u.HomeDir, fake)
 	}
 }
