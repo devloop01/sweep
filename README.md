@@ -22,30 +22,85 @@ Deleted 3 folders, freed about 1.5 GB.
 
 ## Install
 
-Apple Silicon Macs only. Building for Intel Macs or any other OS fails with
-"build constraints exclude all Go files".
+Works on Apple Silicon Macs only. Intel Macs aren't supported.
 
-**Recommended:** build it locally with Go 1.27+:
+### 1. One-time setup
+
+The repo is private, so you need access to it and a GitHub login on your Mac.
+
+1. Ask for read access to [`devloop01/sweep`](https://github.com/devloop01/sweep).
+2. Install the GitHub CLI and sign in. `gh auth setup-git` lets git (and so
+   Go) use that login:
+
+   ```sh
+   brew install gh
+   gh auth login
+   gh auth setup-git
+   ```
+
+### 2a. Install with Go (recommended)
+
+This builds sweep on your Mac, so macOS doesn't quarantine it, and updating is
+one command.
+
+1. Install Go 1.27 or later: `brew install go`, then check with `go version`.
+2. Tell Go the repo is private, so it fetches it from GitHub directly instead
+   of through the public module proxy. Keep the quotes; zsh and fish reject the
+   `*` without them.
+
+   ```sh
+   go env -w 'GOPRIVATE=github.com/devloop01/*'
+   ```
+
+3. Install:
+
+   ```sh
+   go install github.com/devloop01/sweep@latest
+   ```
+
+4. `go install` puts the binary in `~/go/bin`. If `sweep --version` says
+   "command not found", add that folder to your PATH, then open a new terminal:
+
+   ```sh
+   # zsh (the macOS default)
+   echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile
+   # fish
+   fish_add_path ~/go/bin
+   ```
+
+### 2b. Or download the prebuilt binary (no Go needed)
+
+Download it with `gh`, not a browser. macOS quarantines unsigned binaries that
+browsers and Slack download, and Gatekeeper then blocks them. Files that `gh`
+downloads aren't quarantined. Don't disable Gatekeeper to get around this.
+(Signing and notarising the binary would fix this, but needs an Apple
+Developer account, which this project doesn't use yet.)
 
 ```sh
-go install github.com/devloop01/sweep@latest
+cd "$(mktemp -d)"
+gh release download -R devloop01/sweep -p sweep-darwin-arm64 -p SHA256SUMS
+shasum -a 256 -c SHA256SUMS        # must print "sweep-darwin-arm64: OK"
+chmod +x sweep-darwin-arm64
+mkdir -p ~/.local/bin
+mv sweep-darwin-arm64 ~/.local/bin/sweep
 ```
 
-The repo is private, so do this once first:
+If `sweep --version` says "command not found", add `~/.local/bin` to your PATH
+the same way as above (`$HOME/.local/bin` instead of `$HOME/go/bin`).
 
-1. Get read access to `devloop01/sweep` on GitHub.
-2. Tell Go to fetch it directly instead of through the public proxy:
-   `go env -w GOPRIVATE=github.com/devloop01/*`
-3. Make sure git can authenticate to GitHub over HTTPS. With the GitHub CLI,
-   `gh auth login` followed by `gh auth setup-git` does it.
+### 3. Check it and do a first run
 
-It lands in `$(go env GOPATH)/bin`. Because it's built on your machine, macOS
-doesn't quarantine it.
+```sh
+sweep --version                     # e.g. v0.2.0
+sweep --dry-run ~/Documents/Code    # lists what it would delete, deletes nothing
+```
 
-**Prebuilt binary:** `make release` produces `dist/sweep-darwin-arm64`. It isn't
-signed. If you download it through a browser or Slack, macOS quarantines it and
-Gatekeeper blocks it. Signing and notarisation need an Apple Developer account, which this
-project doesn't use yet. Until then, use `go install`. Don't disable Gatekeeper.
+### Update or uninstall
+
+- **Update:** run the same install command again: `go install
+  github.com/devloop01/sweep@latest`, or repeat the download steps.
+- **Uninstall:** `rm ~/go/bin/sweep` (Go) or `rm ~/.local/bin/sweep` (binary).
+  Nothing else is installed.
 
 ## Usage
 
