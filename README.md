@@ -24,71 +24,49 @@ Deleted 3 folders, freed about 1.5 GB.
 
 Works on Apple Silicon Macs only. Intel Macs aren't supported.
 
-### 1. One-time setup
+### With Go
 
-The repo is private, so you need access to it and a GitHub login on your Mac.
-
-1. Ask for read access to [`devloop01/sweep`](https://github.com/devloop01/sweep).
-2. Install the GitHub CLI and sign in. `gh auth setup-git` lets git (and so
-   Go) use that login:
-
-   ```sh
-   brew install gh
-   gh auth login
-   gh auth setup-git
-   ```
-
-### 2a. Install with Go (recommended)
-
-This builds sweep on your Mac, so macOS doesn't quarantine it, and updating is
-one command.
-
-1. Install Go 1.27 or later: `brew install go`, then check with `go version`.
-2. Tell Go the repo is private, so it fetches it from GitHub directly instead
-   of through the public module proxy. Keep the quotes; zsh and fish reject the
-   `*` without them.
-
-   ```sh
-   go env -w 'GOPRIVATE=github.com/devloop01/*'
-   ```
-
-3. Install:
-
-   ```sh
-   go install github.com/devloop01/sweep@latest
-   ```
-
-4. `go install` puts the binary in `~/go/bin`. If `sweep --version` says
-   "command not found", add that folder to your PATH, then open a new terminal:
-
-   ```sh
-   # zsh (the macOS default)
-   echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile
-   # fish
-   fish_add_path ~/go/bin
-   ```
-
-### 2b. Or download the prebuilt binary (no Go needed)
-
-Download it with `gh`, not a browser. macOS quarantines unsigned binaries that
-browsers and Slack download, and Gatekeeper then blocks them. Files that `gh`
-downloads aren't quarantined. Don't disable Gatekeeper to get around this.
-(Signing and notarising the binary would fix this, but needs an Apple
-Developer account, which this project doesn't use yet.)
+Needs Go 1.27 or later (`brew install go`):
 
 ```sh
-cd "$(mktemp -d)"
-gh release download -R devloop01/sweep -p sweep-darwin-arm64 -p SHA256SUMS
-shasum -a 256 -c SHA256SUMS        # must print "sweep-darwin-arm64: OK"
-chmod +x sweep-darwin-arm64
-mkdir -p ~/.local/bin
-mv sweep-darwin-arm64 ~/.local/bin/sweep
+go install github.com/devloop01/sweep@latest
 ```
 
-If `sweep --version` says "command not found", add `~/.local/bin` to your PATH
-the same way as above (`$HOME/.local/bin` instead of `$HOME/go/bin`).
+The binary goes in `~/go/bin`. Because it's built on your Mac, macOS doesn't
+quarantine it.
 
-### 3. Check it and do a first run
+### Without Go
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/devloop01/sweep/main/install.sh | sh
+```
+
+[`install.sh`](install.sh) downloads the binary from the latest release, checks
+it against `SHA256SUMS`, and puts it in `~/.local/bin`.
+
+- **A specific release:** `… | sh -s -- v0.2.0`
+- **Another folder:** `… | SWEEP_INSTALL_DIR=/some/dir sh`
+
+Download it with `curl` (or the script), not a browser. macOS quarantines
+unsigned binaries that browsers and Slack download, and Gatekeeper then blocks
+them. Files that `curl` downloads aren't quarantined. Don't disable Gatekeeper to
+get around this. Signing and notarising the binary would fix it, but that needs
+an Apple Developer account, which this project doesn't use yet.
+
+### PATH
+
+If `sweep --version` says "command not found", add the install folder to your
+PATH (`~/go/bin` for Go, `~/.local/bin` for the script), then open a new
+terminal:
+
+```sh
+# zsh (the macOS default)
+echo 'export PATH="$HOME/go/bin:$PATH"' >> ~/.zprofile
+# fish
+fish_add_path ~/go/bin
+```
+
+### First run
 
 ```sh
 sweep --version                     # e.g. v0.2.0
@@ -97,10 +75,11 @@ sweep --dry-run ~/Documents/Code    # lists what it would delete, deletes nothin
 
 ### Update or uninstall
 
-- **Update:** run the same install command again: `go install
-  github.com/devloop01/sweep@latest`, or repeat the download steps.
-- **Uninstall:** `rm ~/go/bin/sweep` (Go) or `rm ~/.local/bin/sweep` (binary).
+- **Update:** run the install command again.
+- **Uninstall:** `rm ~/go/bin/sweep` (Go) or `rm ~/.local/bin/sweep` (script).
   Nothing else is installed.
+- **Installed from the private repo before?** You can drop that setting:
+  `go env -u GOPRIVATE`.
 
 ## Usage
 
