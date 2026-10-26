@@ -331,7 +331,7 @@ func TestFolders(t *testing.T) {
 	}
 }
 
-// Folders kept because of git are named, so a missing dist/ isn't a mystery.
+// Folders kept because of git aren't listed, but their count is.
 func TestKeptFoldersAreReported(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -345,7 +345,7 @@ func TestKeptFoldersAreReported(t *testing.T) {
 		}
 	}
 	code, out, _ := sweepIn(t, "", false, "-y", root)
-	if code != 0 || !strings.Contains(out, "Keeping p/dist: it may hold files tracked by git") || !strings.Contains(out, "Deleted 3 folders") {
+	if code != 0 || !strings.Contains(out, "Skipped 1 folder that may hold real files") || strings.Contains(out, "p/dist") || !strings.Contains(out, "Deleted 3 folders") {
 		t.Errorf("code %d, out:\n%s", code, out)
 	}
 	if _, err := os.Stat(filepath.Join(root, "p/dist/app.js")); err != nil {

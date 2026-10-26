@@ -66,8 +66,10 @@ for free:
 - **Framework caches:** `.next` `.svelte-kit` `.turbo` `.nuxt` `.output`
   `.astro` `.vite` `.parcel-cache` `.angular` `.docusaurus` `.nx` `.vinxi`
   `storybook-static` and `.vercel/output`
-- **Build output:** `dist` `build` `out`. If git tracks any file inside one
-  (a committed `dist`, scripts kept in `build`), sweep keeps it and tells you.
+- **Build output:** `dist` `build` `out`, but only in a git repo where git
+  confirms nothing inside is tracked. Projects sometimes keep real files in
+  these (a committed `dist`, scripts in `build`), so outside git, or when git
+  tracks files in them, sweep skips them and says how many it skipped.
 
 sweep never deletes anything that would make you set up a project again, like
 `.vercel` or `.netlify` (your project link) or `.wrangler` (local Cloudflare
@@ -109,7 +111,7 @@ list first. It also:
 
 - won't run in your home folder, `~/Library`, system folders, or with `sudo`
 - never follows shortcuts (symlinks), and never touches `.git` folders or apps
-- keeps any folder that git tracks files in
+- skips any folder that git tracks files in
 - stays on your Mac's drive: it won't go into network shares or USB drives
   mounted inside the folder
 

@@ -60,11 +60,14 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 - **No symlinks.** The walk never follows them, and a symlink or file with a
   target's name is skipped.
 - **Never inside** `.git` folders or `*.app` bundles.
-- **Git-tracked folders are kept.** A target inside a git repo is kept if
-  `git ls-files` lists anything in it (a committed `dist`, scripts in
-  `build`), or if git can't answer: it isn't installed, times out, or the
-  repo is broken. Kept folders are printed. Outside a repo, git isn't run.
-  Checked during the scan and again before deleting.
+- **Folders that may hold real files are kept** (`keep` in `git.go`). Inside
+  a git repo, a target is kept if `git ls-files` lists anything in it (a
+  committed `dist`, scripts in `build`) or if git can't answer: it isn't
+  installed, times out, or the repo is broken. Outside a repo, git isn't run
+  and only `dist`, `build` and `out` are kept, since without git there's no
+  way to tell they're only build output. Kept folders aren't listed; sweep
+  prints how many it skipped. Checked during the scan and again before
+  deleting.
 - **`.sweepignore`.** A folder containing an entry with this name is never
   entered, and a target containing one is skipped. The walk skips marked
   folders, and the re-check before delete looks for a marker at every level

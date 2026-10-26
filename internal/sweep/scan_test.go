@@ -89,17 +89,9 @@ var cases = []struct {
 		listed: []string{"root/a/.vercel"},
 	},
 	{
-		name:   "build folders deleted by default",
-		tree:   []string{"root/f/build/src/", "root/f/dist/x", "root/f/out/"},
-		listed: []string{"root/f/build", "root/f/dist", "root/f/out"},
-		kept:   []string{"root/f"},
-	},
-	{
-		name:   "!dist in the config keeps dist folders",
-		config: "!dist\n",
-		tree:   []string{"root/f/build/src/", "root/f/dist/x", "root/f/out/"},
-		listed: []string{"root/f/build", "root/f/out"},
-		kept:   []string{"root/f/dist/x"},
+		name: "build folders outside git are kept (see git_test.go for inside)",
+		tree: []string{"root/f/build/src/", "root/f/dist/x", "root/f/out/"},
+		kept: []string{"root/f/build/src", "root/f/dist/x", "root/f/out"},
 	},
 	{
 		name:   "odd names",

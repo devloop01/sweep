@@ -20,8 +20,8 @@ type Candidate struct {
 }
 
 // Scan finds the target folders under root, which must already be resolved
-// and passed by CheckRoot. Targets that may hold git-tracked files (see
-// tracked) are not candidates; their paths are returned as kept. It never follows symlinks, never enters .git or
+// and passed by CheckRoot. Targets that may hold real files (see keep) are
+// not candidates; their paths are returned as kept. It never follows symlinks, never enters .git or
 // *.app folders, never crosses onto another volume or mount (like
 // find -xdev), and does not look inside a match. Results are sorted by size
 // (biggest first), then path.
@@ -48,7 +48,7 @@ func Scan(root string, t Targets, workers int) (cands []Candidate, kept []string
 				if !vetPath(root, p, t) {
 					continue
 				}
-				if tracked(p) {
+				if keep(p) {
 					mu.Lock()
 					kept = append(kept, p)
 					mu.Unlock()
@@ -138,13 +138,13 @@ const IgnoreFile = ".sweepignore"
 // Vet reports whether p is safe to delete right now: strictly inside root,
 // reached without passing through a symlink or a .git / *.app folder, not in
 // or under a folder marked with IgnoreFile, a real directory (not a symlink)
-// on the same volume as root, still a target, and holding no files that git
-// tracks.
+// on the same volume as root, still a target, and not one to keep (see
+// keep).
 func Vet(root, p string, t Targets) bool {
-	return vetPath(root, p, t) && !tracked(p)
+	return vetPath(root, p, t) && !keep(p)
 }
 
-// vetPath is Vet without the git check.
+// vetPath is Vet without keep.
 func vetPath(root, p string, t Targets) bool {
 	rel, err := filepath.Rel(root, p)
 	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {

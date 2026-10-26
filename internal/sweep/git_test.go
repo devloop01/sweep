@@ -24,8 +24,19 @@ func gitRepo(t *testing.T, dir string, paths ...string) {
 	}
 }
 
-// A target with files git tracks is kept and reported; untracked or ignored
-// build output in the same repo is deleted.
+// keptPaths is kept, relative to root.
+func keptPaths(t *testing.T, root string, kept []string) []string {
+	var out []string
+	for _, k := range kept {
+		r, err := filepath.Rel(root, k)
+		must(t, err)
+		out = append(out, r)
+	}
+	return out
+}
+
+// In a repo: a target with files git tracks is kept, untracked or ignored
+// build output is deleted.
 func TestGitTrackedTargetsAreKept(t *testing.T) {
 	tmp, root := build(t, "root/proj/build/tool.sh", "root/proj/dist/app.js", "root/proj/node_modules/x/f",
 		"root/proj/out/", "root/proj/.gitignore")
@@ -47,6 +58,36 @@ func TestGitTrackedTargetsAreKept(t *testing.T) {
 	}
 }
 
+// Outside any repo, dist/build/out are kept (sweep can't tell they're only
+// output), while caches like node_modules and .next are still deleted.
+func TestBuildFoldersOutsideGitAreKept(t *testing.T) {
+	tmp, root := build(t, "root/lib/build/Gruntfile.js", "root/lib/dist/x.js", "root/lib/out/",
+		"root/lib/node_modules/f", "root/lib/.next/f")
+	cands, kept := Scan(root, DefaultTargets(), 4)
+	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/lib/.next", "root/lib/node_modules"}) {
+		t.Errorf("listed %q, want only the caches", got)
+	}
+	if got := keptPaths(t, root, kept); !slices.Equal(got, []string{"lib/build", "lib/dist", "lib/out"}) {
+		t.Errorf("kept %q", got)
+	}
+	// Remove re-checks too: even if asked, it won't delete them.
+	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{{Path: filepath.Join(root, "lib/build")}}, 4)
+	if len(deleted) != 0 || !exists(filepath.Join(root, "lib/build/Gruntfile.js")) {
+		t.Error("deleted a build folder outside git")
+	}
+}
+
+// !dist in the config means dist is never a target, even when git would
+// allow it.
+func TestUserCanRemoveBuildName(t *testing.T) {
+	tmp, root := build(t, "root/proj/dist/a.js", "root/proj/build/b.js", "root/proj/README")
+	gitRepo(t, filepath.Join(root, "proj"), "README")
+	cands, kept := Scan(root, targetsFor(t, "!dist\n"), 4)
+	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/proj/build"}) || len(kept) != 0 {
+		t.Errorf("listed %q, kept %+v; want only build", got, kept)
+	}
+}
+
 // Files that become tracked after the scan still protect the folder.
 func TestRemoveKeepsFolderTrackedAfterScan(t *testing.T) {
 	_, root := build(t, "root/proj/dist/app.js", "root/proj/README")
@@ -64,7 +105,7 @@ func TestRemoveKeepsFolderTrackedAfterScan(t *testing.T) {
 	}
 }
 
-// When git can't answer, folders inside a repo are kept; folders outside any
+// When git can't answer, folders inside a repo are kept; caches outside any
 // repo don't need git at all.
 func TestWithoutGitFoldersInRepoAreKept(t *testing.T) {
 	_, root := build(t, "root/proj/node_modules/f", "root/proj/README", "root/plain/node_modules/f")

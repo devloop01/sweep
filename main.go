@@ -174,12 +174,15 @@ func run(args []string, e env) int {
 	}
 	fmt.Fprintf(e.stdout, "Scanning %s ...\n", printable(root))
 	cands, kept := sweep.Scan(root, targets, e.workers)
-	for _, k := range kept {
-		rel, _ := filepath.Rel(root, k)
-		fmt.Fprintf(e.stdout, "  Keeping %s: it may hold files tracked by git\n", printable(rel))
+	// Kept folders aren't listed, but a dist/ that survives shouldn't be a mystery.
+	skipped := func() {
+		if len(kept) > 0 {
+			fmt.Fprintf(e.stdout, "Skipped %s that may hold real files: build folders outside git, or ones git tracks files in.\n", folders(len(kept)))
+		}
 	}
 	if len(cands) == 0 {
 		fmt.Fprintln(e.stdout, "Nothing to clean.")
+		skipped()
 		return 0
 	}
 	var total int64
@@ -189,6 +192,7 @@ func run(args []string, e env) int {
 		total += c.Size
 	}
 	fmt.Fprintf(e.stdout, "----\n%s, %s\n", folders(len(cands)), human(total))
+	skipped()
 
 	if dryRun {
 		fmt.Fprintln(e.stdout, "Dry run: nothing deleted.")
