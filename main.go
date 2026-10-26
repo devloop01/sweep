@@ -188,7 +188,7 @@ func run(args []string, e env) int {
 		fmt.Fprintf(e.stdout, "%10s  %s\n", human(c.Size), printable(rel))
 		total += c.Size
 	}
-	fmt.Fprintf(e.stdout, "----\n%d folders, %s\n", len(cands), human(total))
+	fmt.Fprintf(e.stdout, "----\n%s, %s\n", folders(len(cands)), human(total))
 
 	if dryRun {
 		fmt.Fprintln(e.stdout, "Dry run: nothing deleted.")
@@ -208,10 +208,10 @@ func run(args []string, e env) int {
 		fmt.Fprintln(e.stderr, "sweep:", printable(err.Error()))
 	}
 	if len(errs) > 0 {
-		fmt.Fprintf(e.stdout, "Deleted %d of %d folders, freed about %s.\n", len(deleted), len(cands), human(freed))
+		fmt.Fprintf(e.stdout, "Deleted %d of %s, freed about %s.\n", len(deleted), folders(len(cands)), human(freed))
 		return 1
 	}
-	fmt.Fprintf(e.stdout, "Deleted %d folders, freed about %s.\n", len(deleted), human(freed))
+	fmt.Fprintf(e.stdout, "Deleted %s, freed about %s.\n", folders(len(deleted)), human(freed))
 	return 0
 }
 
@@ -233,6 +233,14 @@ func confirm(e env) bool {
 	}
 	answer := strings.ToLower(strings.TrimSpace(line))
 	return answer == "y" || answer == "yes"
+}
+
+// folders returns "1 folder" or "n folders".
+func folders(n int) string {
+	if n == 1 {
+		return "1 folder"
+	}
+	return fmt.Sprintf("%d folders", n)
 }
 
 // human formats bytes with base 1024 and one decimal.

@@ -267,7 +267,7 @@ func TestUserConfig(t *testing.T) {
 	code := run([]string{"--yes", root}, env{
 		configPath: cfg, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
 	})
-	if code != 0 || !strings.Contains(o.String(), "Using targets from "+cfg) || !strings.Contains(o.String(), "Deleted 1 folders") {
+	if code != 0 || !strings.Contains(o.String(), "Using targets from "+cfg) || !strings.Contains(o.String(), "Deleted 1 folder, ") {
 		t.Errorf("code %d, out:\n%s\nstderr:\n%s", code, o.String(), e.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "a/.cache")); err == nil {
@@ -313,5 +313,13 @@ func TestConfigPath(t *testing.T) {
 	t.Setenv("HOME", "/Users/me")
 	if got := configPath(); got != "/Users/me/.config/sweep/targets.conf" {
 		t.Errorf("without XDG_CONFIG_HOME: %q", got)
+	}
+}
+
+func TestFolders(t *testing.T) {
+	for n, want := range map[int]string{0: "0 folders", 1: "1 folder", 2: "2 folders", 68: "68 folders"} {
+		if got := folders(n); got != want {
+			t.Errorf("folders(%d) = %q, want %q", n, got, want)
+		}
 	}
 }
