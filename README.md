@@ -113,7 +113,52 @@ piped input unless you pass `--yes`.
 | **`--build`** | `dist` `build` `out`. Opt-in because some projects commit these or keep real files in them. |
 | **`--deploy`** | All of `.vercel` `.netlify` `.wrangler`. Opt-in because they aren't just cache: you'll need `vercel link` again, and local D1/KV/R2/Durable Objects data in `.wrangler/state` is lost. |
 
-The lists live in [`internal/sweep/targets.go`](internal/sweep/targets.go).
+These are the built-in lists, from
+[`internal/sweep/targets.conf`](internal/sweep/targets.conf). You can change
+them; see [Customize](#customize).
+
+## Customize
+
+To change which folders sweep targets, create `~/.config/sweep/targets.conf`
+(or `$XDG_CONFIG_HOME/sweep/targets.conf`). It uses the same format as the
+[built-in file](internal/sweep/targets.conf):
+
+```
+# The built-in list, minus .output, plus .cache
+[default]
+node_modules
+.svelte-kit
+.turbo
+.next
+.nuxt
+.astro
+.vite
+.parcel-cache
+.angular
+.docusaurus
+.nx
+storybook-static
+.cache
+
+# Don't touch .vercel/output
+[nested]
+```
+
+- Each `[section]` you include **replaces** that built-in list. Sections you
+  leave out keep the defaults, so include only the ones you want to change.
+  An empty section means "none".
+- The sections are `[default]` (always), `[nested]` (always, written
+  `parent/child`, deletes only the child), `[build]` (with `--build`) and
+  `[deploy]` (with `--deploy`).
+- One exact folder name per line, matched case-sensitively. Paths, wildcards,
+  spaces, `.`, `..`, `.git` and `*.app` are rejected. A mistake stops sweep
+  with the line number before it scans anything.
+- When your file is in use, sweep prints `Using targets from …`, so you always
+  know which lists a run used.
+
+The config only changes which folder names count as targets. None of the
+safety rules below can be changed, and sweep still shows the list and asks
+before deleting.
 
 ## Safety
 

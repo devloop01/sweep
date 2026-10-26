@@ -190,12 +190,14 @@ func TestArgs(t *testing.T) {
 
 func TestPrintable(t *testing.T) {
 	for in, want := range map[string]string{
-		"weird\nname": "weird?name",
-		"a\tb\x1b[2J": "a?b?[2J",
-		"evil‮txt":    "evil?txt",
-		"zero​w":      "zero?w",
-		"bad\xffutf8": "bad?utf8",
-		"ünï -x y":    "ünï -x y",
+		"weird\nname":   "weird?name",
+		"a\tb\x1b[2J":   "a?b?[2J",
+		"evil\u202etxt": "evil?txt",
+		"zero\u200bw":   "zero?w",
+		"line\u2028sep": "line?sep",
+		"para\u2029sep": "para?sep",
+		"bad\xffutf8":   "bad?utf8",
+		"ünï -x y":      "ünï -x y",
 	} {
 		if got := printable(in); got != want {
 			t.Errorf("printable(%q) = %q, want %q", in, got, want)
@@ -244,5 +246,72 @@ func TestPromptFlushesTypeahead(t *testing.T) {
 	})
 	if !in.flushedFirst {
 		t.Error("prompt read input without flushing type-ahead first")
+	}
+}
+
+// writeConfig writes a user targets.conf and returns its path.
+func writeConfig(t *testing.T, src string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "targets.conf")
+	if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestUserConfig(t *testing.T) {
+	root := fixture(t)
+	os.MkdirAll(filepath.Join(root, "a/.cache/x"), 0o755)
+	var o, e bytes.Buffer
+	cfg := writeConfig(t, "[default]\n.cache\n")
+	code := run([]string{"--yes", root}, env{
+		configPath: cfg, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
+	})
+	if code != 0 || !strings.Contains(o.String(), "Using targets from "+cfg) || !strings.Contains(o.String(), "Deleted 1 folders") {
+		t.Errorf("code %d, out:\n%s\nstderr:\n%s", code, o.String(), e.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "a/.cache")); err == nil {
+		t.Error("a/.cache wasn't deleted")
+	}
+	if targetsLeft(root) != 3 {
+		t.Error("deleted default targets the config replaced")
+	}
+}
+
+func TestBadUserConfigDeletesNothing(t *testing.T) {
+	root := fixture(t)
+	var o, e bytes.Buffer
+	cfg := writeConfig(t, "[default]\nnode_modules\nsrc/lib\n")
+	code := run([]string{"--yes", root}, env{
+		configPath: cfg, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
+	})
+	if code != 1 || !strings.Contains(e.String(), cfg+" line 3") || strings.Contains(o.String(), "Scanning") {
+		t.Errorf("code %d, out:\n%s\nstderr:\n%s", code, o.String(), e.String())
+	}
+	if targetsLeft(root) != 3 {
+		t.Error("deleted something despite a bad config")
+	}
+}
+
+func TestNoUserConfigUsesDefaults(t *testing.T) {
+	root := fixture(t)
+	var o, e bytes.Buffer
+	code := run([]string{"-n", root}, env{
+		configPath: filepath.Join(t.TempDir(), "missing.conf"), homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
+	})
+	if code != 0 || strings.Contains(o.String(), "Using targets") || !strings.Contains(o.String(), "3 folders") {
+		t.Errorf("code %d, out:\n%s", code, o.String())
+	}
+}
+
+func TestConfigPath(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "/x/config")
+	if got := configPath(); got != "/x/config/sweep/targets.conf" {
+		t.Errorf("with XDG_CONFIG_HOME: %q", got)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "relative") // ignored, like the XDG spec says
+	t.Setenv("HOME", "/Users/me")
+	if got := configPath(); got != "/Users/me/.config/sweep/targets.conf" {
+		t.Errorf("without XDG_CONFIG_HOME: %q", got)
 	}
 }

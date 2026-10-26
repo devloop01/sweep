@@ -102,9 +102,9 @@ var cases = []struct {
 	},
 	{
 		name:   "odd names",
-		tree:   []string{"root/e/weird\nname/node_modules/", "root/-x y/ünï‮/node_modules/f"},
-		listed: []string{"root/e/weird\nname/node_modules", "root/-x y/ünï‮/node_modules"},
-		kept:   []string{"root/e/weird\nname", "root/-x y/ünï‮"},
+		tree:   []string{"root/e/weird\nname/node_modules/", "root/-x y/ünï\u202e/node_modules/f"},
+		listed: []string{"root/e/weird\nname/node_modules", "root/-x y/ünï\u202e/node_modules"},
+		kept:   []string{"root/e/weird\nname", "root/-x y/ünï\u202e"},
 	},
 	{
 		name:   "nested node_modules: only the outer one",
@@ -173,7 +173,7 @@ func TestScan(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(fmt.Sprintf("%s/workers=%d", tc.name, w), func(t *testing.T) {
 				tmp, root := build(t, tc.tree...)
-				got := rels(t, tmp, Scan(root, NewTargets(tc.build, tc.deploy), w))
+				got := rels(t, tmp, Scan(root, DefaultLists().Targets(tc.build, tc.deploy), w))
 				if !slices.Equal(got, sorted(tc.listed)) {
 					t.Errorf("listed %q, want %q", got, sorted(tc.listed))
 				}
@@ -192,7 +192,7 @@ func TestScanOrder(t *testing.T) {
 	_, root := build(t, "root/small/node_modules/", "root/big/node_modules/", "root/b/.next/", "root/a/.next/")
 	must(t, os.WriteFile(filepath.Join(root, "big/node_modules/f"), make([]byte, 64<<10), 0o644))
 	var got []string
-	for _, c := range Scan(root, NewTargets(false, false), 4) {
+	for _, c := range Scan(root, DefaultLists().Targets(false, false), 4) {
 		got = append(got, strings.TrimPrefix(c.Path, root+"/"))
 	}
 	want := []string{"big/node_modules", "a/.next", "b/.next", "small/node_modules"}
@@ -211,7 +211,7 @@ func TestSizeIsAllocated(t *testing.T) {
 	f.Close()
 	must(t, os.WriteFile(filepath.Join(root, "a/node_modules/real"), make([]byte, 100_000), 0o644))
 
-	c := Scan(root, NewTargets(false, false), 4)
+	c := Scan(root, DefaultLists().Targets(false, false), 4)
 	if len(c) != 1 || c[0].Size < 100_000 || c[0].Size > 1<<20 {
 		t.Errorf("got %+v, want one candidate of roughly 100 KB", c)
 	}
@@ -234,7 +234,7 @@ func TestHardLinksCountedOnce(t *testing.T) {
 	}
 	want := blocks(a) + blocks(b) + fileSize
 
-	first := Scan(root, NewTargets(false, false), 4)
+	first := Scan(root, DefaultLists().Targets(false, false), 4)
 	var total int64
 	for _, c := range first {
 		total += c.Size
@@ -246,7 +246,7 @@ func TestHardLinksCountedOnce(t *testing.T) {
 		t.Errorf("biggest is %s, want %s", first[0].Path, a)
 	}
 	for range 5 {
-		if again := Scan(root, NewTargets(false, false), 4); !slices.Equal(again, first) {
+		if again := Scan(root, DefaultLists().Targets(false, false), 4); !slices.Equal(again, first) {
 			t.Fatalf("sizes not deterministic: %+v vs %+v", again, first)
 		}
 	}
@@ -258,7 +258,7 @@ func TestVet(t *testing.T) {
 		"root/.git/x/node_modules/", "root/X.app/node_modules/", "root/a/src/",
 		"root/l -> outside", "root/..x/node_modules/",
 	)
-	tg := NewTargets(false, false)
+	tg := DefaultLists().Targets(false, false)
 	ok := map[string]bool{
 		"root/a/node_modules":          true,
 		"root":                         false, // DIR itself
@@ -308,7 +308,7 @@ func TestScanStaysOnVolume(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(share, "proj/node_modules/f"), []byte("remote"), 0o644))
 	mount(t, filepath.Join(root, "b/node_modules/inner"))
 
-	tg := NewTargets(false, false)
+	tg := DefaultLists().Targets(false, false)
 	cands := Scan(root, tg, 4)
 	if len(cands) != 1 || cands[0].Path != filepath.Join(root, "a/node_modules") {
 		t.Fatalf("listed %+v, want only a/node_modules", cands)
