@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -363,5 +364,27 @@ func TestProgressCountsFolders(t *testing.T) {
 	// enters b/node_modules, so progress keeps moving while sizes are taken.
 	if p.Dirs() != 8 || p.Current() == "" {
 		t.Errorf("Dirs() = %d, Current() = %q; want 8 and a folder", p.Dirs(), p.Current())
+	}
+}
+
+// OnFound reports every folder Scan returns, as it's measured.
+func TestOnFoundReportsEachFolder(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/f", "root/b/.next/f", "root/c/src/")
+	var mu sync.Mutex
+	var seen []string
+	p := &Progress{OnFound: func(c Candidate) {
+		mu.Lock()
+		seen = append(seen, c.Path)
+		mu.Unlock()
+	}}
+	cands, _ := Scan(root, DefaultTargets(), 4, p)
+	slices.Sort(seen)
+	var want []string
+	for _, c := range cands {
+		want = append(want, c.Path)
+	}
+	slices.Sort(want)
+	if !slices.Equal(seen, want) || len(seen) != 2 {
+		t.Errorf("OnFound saw %q, Scan returned %q", seen, want)
 	}
 }

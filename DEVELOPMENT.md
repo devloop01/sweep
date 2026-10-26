@@ -85,12 +85,16 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
   lead outside DIR. Known limit: inside DIR, that race could still redirect a
   delete to another target-named folder in DIR (see `remove.go`).
 - **Interactive screen** (`tui.go`, when stdin and stdout are terminals and
-  neither `-n` nor `-y` is given). Space deletes the highlighted folder at
-  once, through the same `Remove` re-check. The cursor never moves on its
-  own, so a held-down space deletes one folder. Anything typed during the
-  scan is discarded before the screen opens. Deletions run in the
-  background; quitting waits for them. The terminal is restored on every
-  exit (q, Esc, Ctrl-C, the window closing).
+  neither `-n` nor `-y` is given). It opens at once and the scan fills it in
+  (`Progress.OnFound`). Space selects, enter deletes the selection (or the
+  highlighted folder), each through the same `Remove` re-check. As the list
+  re-sorts, the cursor and selections stay on their folders, never on a row,
+  so enter can't hit a folder that just slid under it; finished deletions
+  are matched by path. The cursor never moves on its own, so a held-down
+  enter deletes one folder. Anything typed before the screen opens is
+  discarded. Deletions run in the background, at most one per CPU; quitting
+  waits for them. The terminal is restored on every exit (q, Esc, Ctrl-C,
+  the window closing).
 - **Prompt** (stdin a terminal but stdout not). Only `y`/`yes` proceeds.
   Piped input cancels unless `--yes` is given.
 - **Output.** Control, format and line-separator characters in names print as

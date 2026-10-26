@@ -18,6 +18,11 @@ import (
 type Progress struct {
 	dirs    atomic.Int64
 	current atomic.Pointer[string]
+
+	// OnFound, if set, is called (from Scan's goroutines) with each folder as
+	// soon as it's measured. Its Size counts files hard-linked into other
+	// folders in full; Scan's result has the final sizes.
+	OnFound func(Candidate)
 }
 
 // Dirs is how many folders the scan has read so far.
@@ -76,6 +81,13 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 				m := measure(p, progress)
 				if m.otherFS {
 					continue // a mount inside the target: deleting would reach into it
+				}
+				if progress != nil && progress.OnFound != nil {
+					size := m.own
+					for _, b := range m.shared {
+						size += b
+					}
+					progress.OnFound(Candidate{Path: m.path, Size: size})
 				}
 				mu.Lock()
 				results = append(results, m)

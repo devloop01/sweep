@@ -32,9 +32,13 @@ const usage = `sweep — find and delete node_modules and framework build/cache 
 Usage:
   sweep [flags] [DIR]    DIR defaults to the current directory
 
-In a terminal, sweep opens a list of what it found, biggest first:
-  ↑/↓ or j/k    move
-  space         delete the highlighted folder right away
+In a terminal, sweep opens a list that fills in while it scans, biggest
+first:
+  ↑/↓ or j/k    move (g/G: top/bottom)
+  space         select or unselect the highlighted folder
+  a             select or unselect all
+  enter         delete the selected folders right away (with none
+                selected: the highlighted one)
   q             quit
 
 Flags:
@@ -63,6 +67,7 @@ type env struct {
 	cols           int                                // stdout's width; 0 when it isn't a terminal
 	raw            func() (restore func(), err error) // raw terminal input for the interactive screen; nil in tests
 	size           func() (cols, rows int)            // terminal size for the interactive screen
+	afterScan      func()                             // tests: called when the interactive scan ends
 	live           bool                               // stderr is a terminal: show scan progress
 	flushInput     func()                             // discards type-ahead before the prompt; nil in tests
 	stdout, stderr io.Writer
@@ -189,6 +194,11 @@ func run(args []string, e env) int {
 	if custom {
 		fmt.Fprintf(e.stdout, "Using targets from %s\n", printable(e.configPath))
 	}
+	// In a terminal, deleting is interactive: the list opens at once and
+	// fills in as the scan runs. -n only lists; -y deletes everything.
+	if !dryRun && !yes && e.isTTY && e.cols > 0 {
+		return interactive(e, r, targets, root)
+	}
 	fmt.Fprintf(e.stdout, "Scanning %s ...\n", printable(root))
 	var progress sweep.Progress
 	stop := watch(e, &progress, root)
@@ -205,12 +215,6 @@ func run(args []string, e env) int {
 		skipped()
 		return 0
 	}
-	// In a terminal, deleting is interactive: pick folders and delete them
-	// one by one. -n only lists; -y deletes everything without asking.
-	if !dryRun && !yes && e.isTTY && e.cols > 0 {
-		return interactive(e, r, targets, root, cands, len(kept))
-	}
-
 	// Paths on the left, sizes right-aligned in one column after the longest
 	// path, kept within the terminal. A longer path isn't cut (it's a list of
 	// what gets deleted); it just pushes its own size along.
