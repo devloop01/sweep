@@ -26,6 +26,14 @@ Deleted 3 folders, freed about 1.5 GB.
 go install github.com/devloop01/sweep@latest
 ```
 
+The repo is private, so do this once first:
+
+1. Get read access to `devloop01/sweep` on GitHub.
+2. Tell Go to fetch it directly instead of through the public proxy:
+   `go env -w GOPRIVATE=github.com/devloop01/*`
+3. Make sure git can authenticate to GitHub over HTTPS. With the GitHub CLI,
+   `gh auth login` followed by `gh auth setup-git` does it.
+
 It lands in `$(go env GOPATH)/bin`. Because it's built on your machine, macOS
 doesn't quarantine it.
 
