@@ -1,6 +1,7 @@
 package sweep
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -9,29 +10,31 @@ import (
 )
 
 func TestRemove(t *testing.T) {
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tmp, root := build(t, tc.tree...)
-			tg := NewTargets(tc.build, tc.deploy)
-			cands := Scan(root, tg, 4)
-			deleted, errs := Remove(root, tg, cands, 4)
-			if len(errs) > 0 {
-				t.Fatal(errs)
-			}
-			if got := rels(t, tmp, deleted); !slices.Equal(got, sorted(tc.listed)) {
-				t.Errorf("deleted %q, want %q", got, sorted(tc.listed))
-			}
-			for _, p := range tc.listed {
-				if exists(filepath.Join(tmp, p)) {
-					t.Errorf("%q still exists", p)
+	for _, w := range []int{1, 4} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("%s/workers=%d", tc.name, w), func(t *testing.T) {
+				tmp, root := build(t, tc.tree...)
+				tg := NewTargets(tc.build, tc.deploy)
+				cands := Scan(root, tg, w)
+				deleted, errs := Remove(root, tg, cands, w)
+				if len(errs) > 0 {
+					t.Fatal(errs)
 				}
-			}
-			for _, p := range tc.kept {
-				if !exists(filepath.Join(tmp, p)) {
-					t.Errorf("%q was deleted", p)
+				if got := rels(t, tmp, deleted); !slices.Equal(got, sorted(tc.listed)) {
+					t.Errorf("deleted %q, want %q", got, sorted(tc.listed))
 				}
-			}
-		})
+				for _, p := range tc.listed {
+					if exists(filepath.Join(tmp, p)) {
+						t.Errorf("%q still exists", p)
+					}
+				}
+				for _, p := range tc.kept {
+					if !exists(filepath.Join(tmp, p)) {
+						t.Errorf("%q was deleted", p)
+					}
+				}
+			})
+		}
 	}
 }
 

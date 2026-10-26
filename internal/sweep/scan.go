@@ -70,17 +70,16 @@ func Scan(root string, t Targets, workers int) []Candidate {
 	return cands
 }
 
-// find walks root and sends every folder that matches a target. Each folder
-// is read in its own goroutine; sem bounds how many read at once. sem is
-// only held around ReadDir, so the walk can't deadlock on itself.
+// find walks root and sends every folder that matches a target. A subfolder
+// gets its own goroutine while one of the workers slots is free, otherwise
+// it's walked inline, so there are at most workers+1 walkers and nothing
+// ever waits for a slot.
 func find(root string, t Targets, workers int, found chan<- string) {
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var walk func(dir string)
 	walk = func(dir string) {
-		sem <- struct{}{}
 		entries, err := os.ReadDir(dir)
-		<-sem
 		if err != nil {
 			return // ponytail: unreadable folders are skipped silently, like fd
 		}
@@ -94,10 +93,18 @@ func find(root string, t Targets, workers int, found chan<- string) {
 				found <- p
 				continue // prune: never look inside a match
 			}
-			wg.Go(func() { walk(p) })
+			select {
+			case sem <- struct{}{}:
+				wg.Go(func() {
+					defer func() { <-sem }()
+					walk(p)
+				})
+			default:
+				walk(p)
+			}
 		}
 	}
-	wg.Go(func() { walk(root) })
+	walk(root)
 	wg.Wait()
 }
 

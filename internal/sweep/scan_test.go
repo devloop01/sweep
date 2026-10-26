@@ -1,6 +1,7 @@
 package sweep
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -165,20 +166,22 @@ func sorted(s []string) []string {
 }
 
 func TestScan(t *testing.T) {
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			tmp, root := build(t, tc.tree...)
-			got := rels(t, tmp, Scan(root, NewTargets(tc.build, tc.deploy), 4))
-			if !slices.Equal(got, sorted(tc.listed)) {
-				t.Errorf("listed %q, want %q", got, sorted(tc.listed))
-			}
-			for _, e := range tc.tree { // scanning deletes nothing
-				p, _, _ := strings.Cut(e, " -> ")
-				if !exists(filepath.Join(tmp, p)) {
-					t.Errorf("%q gone after Scan", p)
+	for _, w := range []int{1, 4} { // 1 exercises the inline walk
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("%s/workers=%d", tc.name, w), func(t *testing.T) {
+				tmp, root := build(t, tc.tree...)
+				got := rels(t, tmp, Scan(root, NewTargets(tc.build, tc.deploy), w))
+				if !slices.Equal(got, sorted(tc.listed)) {
+					t.Errorf("listed %q, want %q", got, sorted(tc.listed))
 				}
-			}
-		})
+				for _, e := range tc.tree { // scanning deletes nothing
+					p, _, _ := strings.Cut(e, " -> ")
+					if !exists(filepath.Join(tmp, p)) {
+						t.Errorf("%q gone after Scan", p)
+					}
+				}
+			})
+		}
 	}
 }
 

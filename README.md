@@ -72,7 +72,9 @@ All target lists are in [`internal/sweep/targets.go`](internal/sweep/targets.go)
   `/Volumes` itself, and `*.app` bundles. Paths are compared ignoring case,
   like APFS does.
 - Never follows symlinks, and never looks inside `.git` folders or `*.app`
-  bundles.
+  bundles. Electron apps ship their own `node_modules`. This also means a
+  project folder named like a domain, such as `acme.app`, is skipped entirely,
+  and refused if you pass it as DIR. Rename it, or clean it by hand.
 - Only real folders are deleted. A symlink or file named `node_modules` is
   skipped.
 - Each folder is checked again right before deletion. It must still be inside
