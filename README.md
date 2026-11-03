@@ -132,7 +132,7 @@ shown, because pnpm keeps a shared copy of every package.
 
 ## Upgrade or uninstall
 
-- **Upgrade:** run the install command again.
+- **Upgrade:** `sweep upgrade`, or run the install command again. sweep checks for a new release while it runs and tells you when there is one.
 - **Uninstall:** `rm "$(which sweep)"`. sweep is a single file and leaves
   nothing else behind.
 

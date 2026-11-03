@@ -31,6 +31,8 @@ const usage = `sweep — find and delete node_modules and framework build/cache 
 
 Usage:
   sweep [flags] [DIR]    DIR defaults to the current directory
+  sweep upgrade          install the latest release (a folder named
+                         upgrade: sweep ./upgrade)
 
 In a terminal, sweep opens a list that fills in while it scans, biggest
 first:
@@ -78,11 +80,35 @@ func main() {
 	if bi, ok := debug.ReadBuildInfo(); ok && version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
 		version = bi.Main.Version // go install ...@v1.2.3
 	}
+	if len(os.Args) == 2 && os.Args[1] == "upgrade" {
+		exe, err := os.Executable()
+		if err == nil {
+			exe, err = filepath.EvalSymlinks(exe)
+		}
+		if err == nil {
+			err = upgrade(repoURL, exe, version, os.Stdout)
+		}
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "sweep:", err)
+			os.Exit(1)
+		}
+		return
+	}
+	// Look for a newer release while sweep runs; say so at the end if the
+	// answer is in by then. Never waits, and only for a person at a terminal.
+	notice := make(chan string, 1)
+	if version != "dev" && isTerminal(os.Stderr) {
+		go func() {
+			if tag, err := latest(repoURL); err == nil && newer(tag, version) {
+				notice <- fmt.Sprintf("sweep %s is available (you have %s). Run `sweep upgrade` to install it.", tag, version)
+			}
+		}()
+	}
 	cols := 0
 	if isTerminal(os.Stdout) {
 		cols = termWidth(os.Stdout)
 	}
-	os.Exit(run(os.Args[1:], env{
+	code := run(os.Args[1:], env{
 		configPath: configPath(), cols: cols,
 		raw:    func() (func(), error) { return makeRaw(os.Stdin) },
 		size:   func() (int, int) { return termSize(os.Stdout) },
@@ -92,7 +118,13 @@ func main() {
 		live:   isTerminal(os.Stderr) && os.Getenv("TERM") != "dumb",
 		stdout: os.Stdout, stderr: os.Stderr,
 		workers: runtime.NumCPU(),
-	}))
+	})
+	select {
+	case msg := <-notice:
+		fmt.Fprintln(os.Stderr, msg)
+	default:
+	}
+	os.Exit(code)
 }
 
 // configPath is $XDG_CONFIG_HOME/sweep/targets.conf, or
