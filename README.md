@@ -56,8 +56,8 @@ sweep
 The list opens right away and fills in while sweep scans, biggest first.
 Move with ↑/↓ (or j/k), select folders with **space** (`a` selects all),
 and press **enter** to delete them. With nothing selected, enter deletes the
-highlighted folder. A dialog asks first: press `y` (or pick Delete with ←/→
-and enter) to go ahead, `n` or esc to cancel. `q` quits.
+highlighted folder. sweep asks first: `y` deletes, `n` or esc cancels. `q`
+quits.
 
 To just look, or to clean everything at once:
 
@@ -66,9 +66,8 @@ sweep -n     # only print the list, delete nothing
 sweep -y     # delete everything in the list, no questions
 ```
 
-In a long printed list, the many tiny folders (under 1 MB each) are shown as
-one line, so the ones that matter stand out. You can also pass a folder
-instead of using `cd`: `sweep -n ~/Documents/Code`.
+In a long printed list, folders under 1 MB are folded into one line. You can
+also pass a folder instead of using `cd`: `sweep -n ~/Documents/Code`.
 
 ## What gets deleted
 
@@ -115,12 +114,12 @@ To keep sweep out of a folder, put an empty `.sweepignore` file in it:
 touch ~/Documents/Code/my-project/.sweepignore
 ```
 
-sweep won't look inside that folder at all, so nothing in it is ever deleted.
+sweep won't look inside it.
 
-## Is it safe?
+## Safety
 
-sweep only deletes folders with the names above, and always shows you the
-list first. It also:
+sweep only deletes folders with the names above, and shows you the list
+first unless you pass `-y`. It also:
 
 - won't run in your home folder, `~/Library`, system folders, or with `sudo`
 - never follows shortcuts (symlinks), and never touches `.git` folders or apps
@@ -133,7 +132,8 @@ shown, because pnpm keeps a shared copy of every package.
 
 ## Upgrade or uninstall
 
-- **Upgrade:** `sweep upgrade`, or run the install command again. sweep checks for a new release while it runs and tells you when there is one.
+- **Upgrade:** `sweep upgrade`, or run the install command again. sweep tells
+  you when a new release is out.
 - **Uninstall:** `rm "$(which sweep)"`. sweep is a single file and leaves
   nothing else behind.
 

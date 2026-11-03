@@ -80,7 +80,7 @@ func CheckRoot(dir string, homes, system []string) error {
 		refused = refused || within(dir, s)
 	}
 	if refused {
-		return fmt.Errorf("refusing to run in %s — run it inside a projects folder instead", dir)
+		return fmt.Errorf("refusing to run in %s. Run it in a projects folder instead", dir)
 	}
 	return nil
 }

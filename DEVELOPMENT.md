@@ -30,7 +30,7 @@ somewhere in your home:
 ```sh
 mkdir -p ~/sweep-playground/app/node_modules/pkg ~/sweep-playground/app/.next ~/sweep-playground/site/dist
 echo keep > ~/sweep-playground/app/package.json
-cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n -b
+cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n
 ```
 
 ## Layout
@@ -39,7 +39,8 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n -b
 |---|---|
 | `main.go` | Flags, prompt, output and exit codes |
 | `term.go` | Scan status line, colors, terminal checks |
-| `tui.go` | The interactive screen: keys, drawing, raw terminal mode |
+| `tui.go` | The interactive screen: list, keys, drawing, confirm dialog |
+| `upgrade.go` | `sweep upgrade` and the new-version check |
 | `internal/sweep/targets.conf` | Built-in target lists, embedded in the binary |
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |
 | `internal/sweep/guard.go` | Which folders sweep refuses to run in |
@@ -87,15 +88,17 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
   delete to another target-named folder in DIR (see `remove.go`).
 - **Interactive screen** (`tui.go`, when stdin and stdout are terminals and
   neither `-n` nor `-y` is given). It opens at once and the scan fills it in
-  (`Progress.OnFound`). Space selects, enter deletes the selection (or the
-  highlighted folder), each through the same `Remove` re-check. As the list
-  re-sorts, the cursor and selections stay on their folders, never on a row,
-  so enter can't hit a folder that just slid under it; finished deletions
-  are matched by path. The cursor never moves on its own, so a held-down
-  enter deletes one folder. Anything typed before the screen opens is
-  discarded. Deletions run in the background, at most one per CPU; quitting
-  waits for them. The terminal is restored on every exit (q, Esc, Ctrl-C,
-  the window closing).
+  (`Progress.OnFound`). Space selects. Enter opens a confirm dialog for the
+  selection (or the highlighted folder), and each confirmed folder goes
+  through the same `Remove` re-check. The dialog keeps the folders' paths,
+  so a re-sort while it's open can't change what gets deleted, and Cancel
+  has focus first, so a held-down enter never deletes. As the list
+  re-sorts, the cursor and selections stay on their folders, not rows;
+  until the first key the cursor stays on the top row. Finished deletions
+  are matched by path. Anything typed before the screen opens is discarded.
+  Deletions run in the background, at most one per CPU; quitting waits for
+  them, also on SIGTERM and SIGHUP. Bubble Tea restores the terminal on
+  every exit.
 - **Prompt** (stdin a terminal but stdout not). Only `y`/`yes` proceeds.
   Piped input cancels unless `--yes` is given.
 - **Output.** Control, format and line-separator characters in names print as
@@ -141,7 +144,7 @@ downloads, and installs to `~/.local/bin` by default. Files downloaded with
 `curl` aren't quarantined by macOS, which is why the binary runs even though
 it isn't signed. Signing and notarising would need an Apple Developer account.
 
-CI runs the installer on every push to make sure it still works.
+CI runs the installer on every push.
 
 The workflows pin each action to a commit SHA. Dependabot opens a pull request
 each month when one of them has a new version.

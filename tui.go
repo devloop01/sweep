@@ -257,7 +257,7 @@ func sizeLook(b int64) lipgloss.Style {
 func (s *screen) view(l look, w, h int) []string {
 	head := strong.Render(folders(len(s.items)) + " · " + human(s.total))
 	if s.scanning {
-		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %s checked · %s found", folders(int(s.checked)), folders(len(s.items))))
+		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %d checked, %d found", s.checked, len(s.items)))
 	}
 	lines := []string{clip(badge.Render("sweep")+"  "+head, w-1), ""}
 	s.page = max(h-len(lines)-3, 1)
@@ -304,9 +304,6 @@ func (s *screen) view(l look, w, h int) []string {
 		pad := strings.Repeat(" ", max(10-ansi.StringWidth(status), 0))
 		lines = append(lines, bar+row.Render(" ")+box+row.Render(" ")+cells+style.Inherit(row).Render(pad+status)+row.Render(" "))
 	}
-	if len(s.items) == 0 && s.scanning {
-		lines = append(lines, faint.Render(clip("  Looking for folders to clean…", w-1)))
-	}
 	for len(lines) < h-2 {
 		lines = append(lines, "")
 	}
@@ -326,8 +323,10 @@ func (s *screen) view(l look, w, h int) []string {
 		lines = append(lines, clip(bad.Render(s.message), w-1))
 	case nsel > 0:
 		lines = append(lines, clip(warn.Render("Selected "+folders(nsel)+", "+human(selSize)), w-1))
-	default:
+	case s.freed > 0:
 		lines = append(lines, clip(good.Render("Freed "+human(s.freed)), w-1))
+	default:
+		lines = append(lines, "")
 	}
 	lines = append(lines, s.help(l, w))
 	if s.ask == nil {
@@ -352,10 +351,11 @@ func (s *screen) dialog(l look) string {
 	for _, p := range s.ask {
 		size += s.items[s.find(p)].cand.Size
 	}
-	title := "Delete " + folders(len(s.ask)) + "?"
+	what := folders(len(s.ask))
 	if len(s.ask) == 1 {
-		title = "Delete " + s.items[s.find(s.ask[0])].path + "?"
+		what = fit(s.items[s.find(s.ask[0])].path, 40)
 	}
+	title := "Delete " + what + " (" + human(size) + ")?"
 	button := func(label string, focus bool) string {
 		st := lipgloss.NewStyle().Padding(0, 2).Foreground(lipgloss.LightDark(l.dark)(lipgloss.Color("#4A4A4A"), lipgloss.Color("#B2B2B2"))).
 			Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E4E4E4"), lipgloss.Color("#3A3A3A")))
@@ -365,8 +365,7 @@ func (s *screen) dialog(l look) string {
 		return st.Render(label)
 	}
 	body := lipgloss.JoinVertical(lipgloss.Center,
-		strong.Render(fit(title, 50)),
-		faint.Render(human(size)+" · comes back with the next install or build"),
+		strong.Render(title),
 		"",
 		button("Delete", s.yes)+"  "+button("Cancel", !s.yes),
 	)
@@ -442,7 +441,7 @@ func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
 		}
 	}
 	if s.skipped > 0 {
-		fmt.Fprintf(e.stdout, "Skipped %s that may hold real files: build folders outside git, or ones git tracks files in.\n", folders(s.skipped))
+		fmt.Fprintf(e.stdout, "Skipped %s that may hold your files (outside git, or tracked by git).\n", folders(s.skipped))
 	}
 	switch {
 	case len(s.items) == 0 && !s.scanning:
@@ -453,7 +452,7 @@ func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
 		fmt.Fprintln(e.stdout, e.paint(green, fmt.Sprintf("Deleted %s, freed about %s.", folders(n), human(s.freed))))
 	}
 	if nfailed > 0 {
-		fmt.Fprintf(e.stderr, "sweep: %s couldn't be deleted (shown as failed).\n", folders(nfailed))
+		fmt.Fprintf(e.stderr, "sweep: couldn't delete %s.\n", folders(nfailed))
 		return 1
 	}
 	return 0
