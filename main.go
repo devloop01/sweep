@@ -26,35 +26,35 @@ import (
 
 var version = "dev" // set with -ldflags "-X main.version=..."
 
-const usage = `sweep — find and delete node_modules and framework build/cache folders
-(.svelte-kit, .turbo, .next, ...) under a directory.
+const usage = `sweep deletes node_modules and build/cache folders (.svelte-kit,
+.turbo, .next, ...) under a folder.
 
 Usage:
-  sweep [flags] [DIR]    DIR defaults to the current directory
-  sweep upgrade          install the latest release (a folder named
-                         upgrade: sweep ./upgrade)
+  sweep [flags] [DIR]    DIR defaults to the current folder
+  sweep upgrade          install the latest release
 
-In a terminal, sweep opens a list that fills in while it scans, biggest
-first:
+In a terminal, sweep opens a list that fills in as it scans, biggest first:
   ↑/↓ or j/k    move (g/G: top/bottom)
-  space         select or unselect the highlighted folder
+  space         select or unselect a folder
   a             select or unselect all
-  enter         delete the selected folders (with none selected: the
-                highlighted one), after you confirm: y or Delete
+  enter         delete the selected folders, or the highlighted one
+  y / n         confirm or cancel a delete
   q             quit
 
 Flags:
-  -n, --dry-run   only print the list, delete nothing
-  -y, --yes       delete everything listed, without opening the list
+  -n, --dry-run   print the list, delete nothing
+  -y, --yes       delete everything in the list without asking
   -h, --help      show this help
       --version   print the version
 
 Everything sweep deletes by default comes back with npm/pnpm install or the
-next dev/build run.
+next dev or build run.
 
-To add or remove folder names, list them in ~/.config/sweep/targets.conf,
-one per line (!name stops deleting one). See
+To change which folders it deletes, list names in
+~/.config/sweep/targets.conf, one per line (!name to stop deleting one). See
 https://github.com/devloop01/sweep#customize
+
+To sweep a folder named upgrade, run sweep ./upgrade.
 `
 
 // env is everything run needs from the outside world, so tests can fake it.
@@ -99,7 +99,7 @@ func main() {
 	if version != "dev" && isTerminal(os.Stderr) {
 		go func() {
 			if tag, err := latest(repoURL); err == nil && newer(tag, version) {
-				notice <- fmt.Sprintf("sweep %s is available (you have %s). Run `sweep upgrade` to install it.", tag, version)
+				notice <- fmt.Sprintf("sweep %s is out (you have %s). Run sweep upgrade to update.", tag, version)
 			}
 		}()
 	}
@@ -196,7 +196,7 @@ func run(args []string, e env) int {
 	if e.asRoot {
 		// Under sudo both $HOME and the user record can point at root's
 		// home, so the home-folder guard can't be trusted.
-		fmt.Fprintln(e.stderr, "sweep: refusing to run as root — run it as yourself, without sudo.")
+		fmt.Fprintln(e.stderr, "sweep: refusing to run as root. Run it without sudo.")
 		return 1
 	}
 
@@ -237,7 +237,7 @@ func run(args []string, e env) int {
 	// Kept folders aren't listed, but a dist/ that survives shouldn't be a mystery.
 	skipped := func() {
 		if len(kept) > 0 {
-			fmt.Fprintf(e.stdout, "Skipped %s that may hold real files: build folders outside git, or ones git tracks files in.\n", folders(len(kept)))
+			fmt.Fprintf(e.stdout, "Skipped %s that may hold your files (outside git, or tracked by git).\n", folders(len(kept)))
 		}
 	}
 	if len(cands) == 0 {
