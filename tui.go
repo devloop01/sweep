@@ -3,7 +3,6 @@
 package main
 
 import (
-	"bytes"
 	"cmp"
 	"fmt"
 	"os"
@@ -13,15 +12,16 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
-	"unsafe"
 
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/devloop01/sweep/internal/sweep"
 )
 
 // The interactive screen: it opens at once and fills in while the scan
 // runs. Move with the arrow keys, space selects, enter deletes the selected
-// folders (or the highlighted one), q quits.
+// folders (or the highlighted one), q quits. screen holds the list and its
+// rules; Bubble Tea (model, below) runs it in the terminal.
 
 type state int
 
@@ -234,7 +234,7 @@ func (s *screen) view(e env, w, h int) []string {
 		case failed:
 			status, style = "failed", red
 		}
-		pad := strings.Repeat(" ", max(room-utf8.RuneCountInString(fit(it.path, room)), 0))
+		pad := strings.Repeat(" ", max(room-ansi.StringWidth(fit(it.path, room)), 0))
 		when := ""
 		if ageW > 0 {
 			when = e.paint(dim, fmt.Sprintf("%8s", age(it.cand.Touched, time.Now()))) + "  "
@@ -309,120 +309,135 @@ func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
 	return 0
 }
 
-type scanned struct {
-	cands []sweep.Candidate
-	kept  []string
+// Messages the scan, deletions and signals send to the screen.
+type (
+	foundMsg struct {
+		cand sweep.Candidate
+		path string
+	}
+	scanDoneMsg struct {
+		cands []sweep.Candidate
+		kept  int
+	}
+	tickMsg   struct{}
+	signalMsg struct{}
+)
+
+// model runs the screen inside Bubble Tea, which owns the terminal: raw
+// input, the alternate screen, resizes, and restoring it all on exit.
+type model struct {
+	s        *screen
+	e        env
+	w, h     int
+	progress *sweep.Progress
+	remove   func(sweep.Candidate) result
 }
 
-// runScreen puts the terminal in raw mode on the alternate screen, scans in
-// the background, runs the event loop, and always restores the terminal.
+// keyNames maps Bubble Tea's key names to the screen's.
+var keyNames = map[string]string{
+	"up": "up", "k": "up", "down": "down", "j": "down",
+	"pgup": "pgup", "pgdown": "pgdn", "home": "home", "g": "home", "end": "end", "G": "end",
+	"space": "space", "enter": "enter", "a": "all",
+	"q": "quit", "esc": "quit", "ctrl+c": "quit", "ctrl+d": "quit",
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+func (m *model) Init() tea.Cmd { return tick() }
+
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+	switch msg := msg.(type) {
+	case tea.KeyPressMsg:
+		k, ok := keyNames[msg.String()]
+		if !ok {
+			break // other keys do nothing, not even unpin the cursor
+		}
+		for _, c := range m.s.key(k) {
+			cmds = append(cmds, func() tea.Msg { return m.remove(c) })
+		}
+	case tea.WindowSizeMsg:
+		m.w, m.h = msg.Width, msg.Height
+	case foundMsg:
+		m.s.add(msg.cand, msg.path)
+	case scanDoneMsg:
+		m.s.finish(msg.cands, msg.kept)
+		if len(m.s.items) == 0 {
+			m.s.key("quit") // nothing to clean: close and say so
+		}
+		if m.e.afterScan != nil {
+			m.e.afterScan()
+		}
+	case result:
+		m.s.done(msg.path, msg.err)
+	case signalMsg:
+		m.s.key("quit")
+	case tickMsg:
+		if m.s.scanning {
+			cmds = append(cmds, tick())
+		}
+	}
+	m.s.checked = m.progress.Dirs()
+	if m.s.finished() {
+		return m, tea.Quit
+	}
+	return m, tea.Batch(cmds...)
+}
+
+func (m *model) View() tea.View {
+	v := tea.NewView(strings.Join(m.s.view(m.e, m.w, m.h), "\n"))
+	v.AltScreen = true
+	return v
+}
+
+// runScreen scans in the background and runs the screen until the user
+// quits and the deletions they started have finished.
 func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error {
 	if e.flushInput != nil {
 		e.flushInput() // keys typed before the screen opened must not delete anything
 	}
-	if e.raw != nil {
-		restore, err := e.raw()
-		if err != nil {
-			return err
+	w, h := e.size()
+	sem := make(chan struct{}, max(e.workers, 1)) // deletions at once
+	m := &model{s: s, e: e, w: w, h: h, progress: &sweep.Progress{}, remove: func(c sweep.Candidate) result {
+		sem <- struct{}{}
+		defer func() { <-sem }()
+		deleted, errs := sweep.Remove(r, t, []sweep.Candidate{c}, 1)
+		var err error
+		switch {
+		case len(errs) > 0:
+			err = errs[0]
+		case len(deleted) == 0:
+			rel, _ := filepath.Rel(root, c.Path)
+			err = fmt.Errorf("kept %s: it changed since the scan", printable(rel))
 		}
-		defer restore()
-	}
-	fmt.Fprint(e.stdout, "\x1b[?1049h\x1b[?25l") // alternate screen, hide cursor
-	defer fmt.Fprint(e.stdout, "\x1b[?25h\x1b[?1049l")
-
-	done := make(chan struct{})
-	defer close(done)
+		return result{c.Path, err}
+	}}
+	// Bubble Tea's own handler quits at once on SIGTERM; sweep's quit waits
+	// for running deletions. (Ctrl-C arrives as a key: input is raw.)
+	p := tea.NewProgram(m, tea.WithInput(e.stdin), tea.WithOutput(e.stdout), tea.WithWindowSize(w, h), tea.WithoutSignalHandler())
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+	go func() {
+		for range sigs {
+			p.Send(signalMsg{})
+		}
+	}()
 
 	// The scan runs in the background; each folder shows up when measured.
-	found := make(chan sweep.Candidate)
-	finished := make(chan scanned, 1)
-	progress := &sweep.Progress{OnFound: func(c sweep.Candidate) {
-		select {
-		case found <- c:
-		case <-done:
-		}
-	}}
-	go func() {
-		cands, kept := sweep.Scan(root, t, e.workers, progress)
-		finished <- scanned{cands, kept}
-	}()
-
-	input := make(chan string)
-	go func() {
-		buf := make([]byte, 256)
-		for {
-			n, err := e.stdin.Read(buf)
-			ks := keys(buf[:n])
-			if err != nil {
-				ks = append(ks, "quit")
-			}
-			for _, k := range ks {
-				select {
-				case input <- k:
-				case <-done:
-					return
-				}
-			}
-			if err != nil {
-				return
-			}
-		}
-	}()
-	// Resizes redraw; being closed or killed quits cleanly, so the terminal
-	// is restored. (Ctrl-C arrives as a key: raw mode turns signals off.)
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGWINCH, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(sigs)
-	tick := time.NewTicker(100 * time.Millisecond) // scan progress
-	defer tick.Stop()
-	results := make(chan result)
-	sem := make(chan struct{}, max(e.workers, 1)) // deletions at once
-
-	for {
-		s.checked = progress.Dirs()
-		w, h := e.size()
-		fmt.Fprint(e.stdout, "\x1b[H"+strings.Join(s.view(e, w, h), "\x1b[K\n")+"\x1b[K\x1b[J")
-		if s.finished() {
-			return nil
-		}
-		select {
-		case k := <-input:
-			for _, c := range s.key(k) {
-				go func() {
-					sem <- struct{}{}
-					defer func() { <-sem }()
-					deleted, errs := sweep.Remove(r, t, []sweep.Candidate{c}, 1)
-					var err error
-					switch {
-					case len(errs) > 0:
-						err = errs[0]
-					case len(deleted) == 0:
-						rel, _ := filepath.Rel(root, c.Path)
-						err = fmt.Errorf("kept %s: it changed since the scan", printable(rel))
-					}
-					results <- result{c.Path, err}
-				}()
-			}
-		case c := <-found:
-			rel, _ := filepath.Rel(root, c.Path)
-			s.add(c, printable(rel))
-		case f := <-finished:
-			s.finish(f.cands, len(f.kept))
-			if len(s.items) == 0 {
-				s.key("quit") // nothing to clean: close and say so
-			}
-			if e.afterScan != nil {
-				e.afterScan()
-			}
-		case res := <-results:
-			s.done(res.path, res.err)
-		case sig := <-sigs:
-			if sig != syscall.SIGWINCH {
-				s.key("quit")
-			}
-		case <-tick.C:
-		}
+	// Send returns at once after the screen has closed.
+	m.progress.OnFound = func(c sweep.Candidate) {
+		rel, _ := filepath.Rel(root, c.Path)
+		p.Send(foundMsg{c, printable(rel)})
 	}
+	go func() {
+		cands, kept := sweep.Scan(root, t, e.workers, m.progress)
+		p.Send(scanDoneMsg{cands, len(kept)})
+	}()
+	_, err := p.Run()
+	return err
 }
 
 // age says how long ago t was, short enough for an 8-wide column.
@@ -442,79 +457,13 @@ func age(t, now time.Time) string {
 	}
 }
 
-// clip cuts s to its first n runes.
-func clip(s string, n int) string {
-	r := []rune(s)
-	return string(r[:min(len(r), max(n, 0))])
-}
+// clip cuts s to n columns.
+func clip(s string, n int) string { return ansi.Truncate(s, max(n, 0), "") }
 
-// fit cuts s from the left to n runes, keeping its end ("…/app/node_modules").
+// fit cuts s from the left to n columns, keeping its end ("…/app/node_modules").
 func fit(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
+	if w := ansi.StringWidth(s); w > n {
+		return "…" + ansi.TruncateLeft(s, w-n+1, "")
 	}
-	return "…" + string(r[len(r)-n+1:])
-}
-
-// keys turns raw terminal input into key names.
-func keys(b []byte) []string {
-	seqs := []struct{ in, key string }{
-		{"\x1b[A", "up"}, {"\x1bOA", "up"}, {"\x1b[B", "down"}, {"\x1bOB", "down"},
-		{"\x1b[5~", "pgup"}, {"\x1b[6~", "pgdn"},
-		{"\x1b[H", "home"}, {"\x1bOH", "home"}, {"\x1b[1~", "home"},
-		{"\x1b[F", "end"}, {"\x1bOF", "end"}, {"\x1b[4~", "end"},
-	}
-	single := map[byte]string{' ': "space", '\r': "enter", '\n': "enter", 'a': "all", 'k': "up", 'j': "down", 'g': "home", 'G': "end", 'q': "quit", 3: "quit", 4: "quit"}
-	var out []string
-next:
-	for len(b) > 0 {
-		for _, s := range seqs {
-			if bytes.HasPrefix(b, []byte(s.in)) {
-				out, b = append(out, s.key), b[len(s.in):]
-				continue next
-			}
-		}
-		if b[0] == 0x1b {
-			if len(b) == 1 {
-				return append(out, "quit") // Esc on its own
-			}
-			// An escape sequence we don't use: skip it whole.
-			end := bytes.IndexFunc(b[1:], func(r rune) bool { return r >= '@' && r <= '~' && r != '[' && r != 'O' })
-			if end < 0 {
-				return out
-			}
-			b = b[end+2:]
-			continue
-		}
-		if k, ok := single[b[0]]; ok {
-			out = append(out, k)
-		}
-		b = b[1:]
-	}
-	return out
-}
-
-// makeRaw switches f to raw input (no echo, no line buffering, no signal
-// keys) and returns a func that restores it. Output processing stays on.
-func makeRaw(f *os.File) (restore func(), err error) {
-	var old syscall.Termios
-	if err := termios(f, syscall.TIOCGETA, &old); err != nil {
-		return nil, err
-	}
-	raw := old
-	raw.Lflag &^= syscall.ECHO | syscall.ICANON | syscall.ISIG | syscall.IEXTEN
-	raw.Iflag &^= syscall.IXON | syscall.ICRNL | syscall.BRKINT | syscall.INPCK | syscall.ISTRIP
-	raw.Cc[syscall.VMIN], raw.Cc[syscall.VTIME] = 1, 0
-	if err := termios(f, syscall.TIOCSETA, &raw); err != nil {
-		return nil, err
-	}
-	return func() { termios(f, syscall.TIOCSETA, &old) }, nil
-}
-
-func termios(f *os.File, req uintptr, t *syscall.Termios) error {
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), req, uintptr(unsafe.Pointer(t))); errno != 0 {
-		return errno
-	}
-	return nil
+	return s
 }

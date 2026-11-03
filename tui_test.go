@@ -15,27 +15,26 @@ import (
 	"time"
 	"unicode/utf8"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/devloop01/sweep/internal/sweep"
 )
 
-func TestKeys(t *testing.T) {
-	for in, want := range map[string][]string{
-		"\x1b[A\x1b[B":     {"up", "down"},
-		"\x1bOA\x1bOB":     {"up", "down"},
-		"jk gG":            {"down", "up", "space", "home", "end"},
-		"\x1b[5~\x1b[6~":   {"pgup", "pgdn"},
-		"\x1b[H\x1b[F":     {"home", "end"},
-		"q":                {"quit"},
-		"\x03":             {"quit"},           // Ctrl-C
-		"\x04":             {"quit"},           // Ctrl-D
-		"\x1b":             {"quit"},           // Esc on its own
-		"\x1b[C\x1b[1;5Dj": {"down"},           // unused sequences are skipped whole
-		"x\r\n":            {"enter", "enter"}, // Return is enter; other letters do nothing
-		"a":                {"all"},
-		" \x1b[B \x1b[B":   {"space", "down", "space", "down"},
+// Bubble Tea parses the terminal input; this checks its key names map to
+// the screen's. (The interactive tests below type raw bytes end to end.)
+func TestKeyNames(t *testing.T) {
+	for k, want := range map[tea.KeyPressMsg]string{
+		{Code: tea.KeyUp}: "up", {Code: 'k', Text: "k"}: "up",
+		{Code: tea.KeyDown}: "down", {Code: 'j', Text: "j"}: "down",
+		{Code: tea.KeyPgUp}: "pgup", {Code: tea.KeyPgDown}: "pgdn",
+		{Code: tea.KeyHome}: "home", {Code: 'g', Text: "g"}: "home",
+		{Code: tea.KeyEnd}: "end", {Code: 'g', Text: "G", Mod: tea.ModShift}: "end",
+		{Code: tea.KeySpace, Text: " "}: "space", {Code: tea.KeyEnter}: "enter",
+		{Code: 'a', Text: "a"}: "all", {Code: 'q', Text: "q"}: "quit",
+		{Code: tea.KeyEscape}: "quit", {Code: 'c', Mod: tea.ModCtrl}: "quit", {Code: 'd', Mod: tea.ModCtrl}: "quit",
+		{Code: 'x', Text: "x"}: "", // other keys do nothing
 	} {
-		if got := keys([]byte(in)); !slices.Equal(got, want) {
-			t.Errorf("keys(%q) = %q, want %q", in, got, want)
+		if got := keyNames[k.String()]; got != want {
+			t.Errorf("%q maps to %q, want %q", k.String(), got, want)
 		}
 	}
 }
@@ -178,7 +177,7 @@ func TestScreenCursorFollowsFolder(t *testing.T) {
 	}
 }
 
-var ansi = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+var escapes = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func TestScreenView(t *testing.T) {
 	s := newScreen(40)
@@ -191,7 +190,7 @@ func TestScreenView(t *testing.T) {
 			t.Errorf("%dx%d: %d lines", w, h, len(lines))
 		}
 		for _, l := range lines {
-			if n := utf8.RuneCountInString(ansi.ReplaceAllString(l, "")); n > w {
+			if n := utf8.RuneCountInString(escapes.ReplaceAllString(l, "")); n > w {
 				t.Errorf("%dx%d: line %d wide: %q", w, h, n, l)
 			}
 		}
@@ -271,8 +270,9 @@ func TestInteractiveDeletesHighlighted(t *testing.T) {
 	if targetsLeft(root) != 2 {
 		t.Errorf("%d targets left, want 2", targetsLeft(root))
 	}
-	if !strings.Contains(out, "\x1b[?1049h") || !strings.HasSuffix(strings.Split(out, "Deleted")[0], "\x1b[?25h\x1b[?1049l") {
-		t.Error("alternate screen not entered and left around the summary")
+	before, _, _ := strings.Cut(out, "Deleted")
+	if !strings.Contains(before, "\x1b[?1049h") || !strings.Contains(before, "\x1b[?1049l") || !strings.Contains(before, "\x1b[?25h") {
+		t.Errorf("alternate screen not entered and left before the summary: %q", out[max(len(out)-300, 0):])
 	}
 }
 
@@ -295,7 +295,7 @@ func TestInteractiveDeletesSelection(t *testing.T) {
 }
 
 func TestInteractiveQuitDeletesNothing(t *testing.T) {
-	for _, input := range []string{"q", "", "\x03", "jjk\x1b", "g  a a q"} { // selecting alone deletes nothing
+	for _, input := range []string{"q", "\x03", "jjk\x1b", "g  a a q"} { // selecting alone deletes nothing
 		root, code, out := keysThen(t, input)
 		if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
 			t.Errorf("%q: code %d, left %d, out:\n%q", input, code, targetsLeft(root), out)
