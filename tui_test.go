@@ -123,6 +123,24 @@ func TestScreenKeys(t *testing.T) {
 	}
 }
 
+// Before any key the cursor stays on the top row as bigger folders arrive,
+// but a space or enter right after the top changed does nothing.
+func TestScreenCursorStartsAtTop(t *testing.T) {
+	s := &screen{scanning: true}
+	s.add(sweep.Candidate{Path: "/r/a", Size: 1}, "a")
+	s.add(sweep.Candidate{Path: "/r/b", Size: 5}, "b")
+	if s.cursor != 0 {
+		t.Fatalf("cursor on row %d, want the top", s.cursor)
+	}
+	if c := s.key("enter"); c != nil {
+		t.Fatalf("enter right after the top changed deleted %v", c)
+	}
+	s.add(sweep.Candidate{Path: "/r/c", Size: 9}, "c")
+	if s.items[s.cursor].path != "b" {
+		t.Errorf("after a key the cursor should follow b, on %q", s.items[s.cursor].path)
+	}
+}
+
 // While the scan adds folders (re-sorting the list), the cursor stays on the
 // same folder, so space deletes the folder that was highlighted, not
 // whatever slid into its row. Finished deletions are matched by path.
@@ -131,6 +149,7 @@ func TestScreenCursorFollowsFolder(t *testing.T) {
 	add := func(name string, size int64) { s.add(sweep.Candidate{Path: "/r/" + name, Size: size}, name) }
 	add("a", 3)
 	add("b", 1)
+	s.moved = true
 	s.key("down") // on b
 	add("c", 5)   // sorts to the top: c, a, b
 	add("d", 2)   // c, a, d, b

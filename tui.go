@@ -53,7 +53,9 @@ type screen struct {
 	page      int // visible rows, from the last view
 	quitting  bool
 	message   string
-	deletions int // in progress
+	deletions int       // in progress
+	moved     bool      // a key was pressed; until then the cursor stays on the top row
+	topSince  time.Time // when the top row last changed while the cursor sat there
 }
 
 // add puts a folder the scan just found into the list, biggest first.
@@ -81,8 +83,9 @@ func (s *screen) finish(cands []sweep.Candidate, kept int) {
 	s.scanning, s.skipped = false, kept
 }
 
-// sort orders the list biggest first. The cursor stays on the same folder,
-// not the same row, so space never deletes a folder that just slid under it.
+// sort orders the list biggest first. Once a key has been pressed the
+// cursor stays on the same folder, not the same row, so space never deletes
+// a folder that just slid under it. Before that it stays on the top row.
 func (s *screen) sort() {
 	var at string
 	if len(s.items) > 1 {
@@ -91,7 +94,13 @@ func (s *screen) sort() {
 	slices.SortStableFunc(s.items, func(a, b item) int {
 		return cmp.Or(cmp.Compare(b.cand.Size, a.cand.Size), strings.Compare(a.cand.Path, b.cand.Path))
 	})
-	if at != "" {
+	switch {
+	case len(s.items) == 0:
+	case !s.moved:
+		if s.items[0].cand.Path != at {
+			s.topSince = time.Now()
+		}
+	case at != "":
 		s.cursor = s.find(at)
 	}
 }
@@ -108,6 +117,14 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 	}
 	if len(s.items) == 0 {
 		return nil
+	}
+	if !s.moved {
+		s.moved = true
+		// The top row just changed: this key may have been meant for the
+		// folder that was there. It only stops the cursor following the top.
+		if (k == "space" || k == "enter") && time.Since(s.topSince) < 500*time.Millisecond {
+			return nil
+		}
 	}
 	last := len(s.items) - 1
 	switch k {
