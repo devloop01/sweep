@@ -185,7 +185,7 @@ func TestScreenView(t *testing.T) {
 	for _, size := range [][2]int{{80, 24}, {40, 10}, {20, 6}} {
 		w, h := size[0], size[1]
 		s.cursor = 30
-		lines := s.view(env{color: true}, w, h)
+		lines := s.view(look{dark: true, spin: "⠋"}, w, h)
 		if len(lines) != h {
 			t.Errorf("%dx%d: %d lines", w, h, len(lines))
 		}
@@ -194,12 +194,15 @@ func TestScreenView(t *testing.T) {
 				t.Errorf("%dx%d: line %d wide: %q", w, h, n, l)
 			}
 		}
-		if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(l, "> ") }) {
+		if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(escapes.ReplaceAllString(l, ""), "▌") }) {
 			t.Errorf("%dx%d: cursor row scrolled out of view", w, h)
 		}
 	}
+	if help := escapes.ReplaceAllString(s.view(look{}, 80, 24)[23], ""); !strings.Contains(help, "space select") || !strings.Contains(help, "q quit") {
+		t.Errorf("help bar: %q", help)
+	}
 	s.cursor = 3
-	lines := s.view(env{}, 60, 24)
+	lines := s.view(look{}, 60, 24)
 	if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "…") && strings.Contains(l, "/node_modules") }) {
 		t.Error("long path not cut from the left")
 	}
