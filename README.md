@@ -6,14 +6,14 @@ Free up disk space by deleting `node_modules` and build caches (`.next`,
 ```
 $ cd ~/Documents/Code
 $ sweep
-sweep  3 folders, 1.5 GB
-↑↓ move   space select   a all   enter delete   q quit
+ sweep   3 folders · 1.5 GB
 
-  [x] agency/web/node_modules                1.2 GB
->     agency/web/.svelte-kit                deleted
-  [ ] site/.vercel/output                   12.0 KB
+  ◉ agency/web/node_modules       2d ago      1.2 GB
+▌   agency/web/.svelte-kit        today    ✓ deleted
+  ○ site/.vercel/output           3mo ago    12.0 KB
 
-Selected 1 folder, 1.2 GB · enter deletes them
+Selected 1 folder, 1.2 GB
+↑↓ move • space select • a all • enter delete 1 folder • q quit
 ```
 
 Everything it deletes comes back with `npm install` / `pnpm install` or your
@@ -56,7 +56,8 @@ sweep
 The list opens right away and fills in while sweep scans, biggest first.
 Move with ↑/↓ (or j/k), select folders with **space** (`a` selects all),
 and press **enter** to delete them. With nothing selected, enter deletes the
-highlighted folder. `q` quits.
+highlighted folder. A dialog asks first: press `y` (or pick Delete with ←/→
+and enter) to go ahead, `n` or esc to cancel. `q` quits.
 
 To just look, or to clean everything at once:
 
