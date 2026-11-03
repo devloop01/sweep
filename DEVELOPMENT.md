@@ -2,8 +2,8 @@
 
 [![test](https://github.com/devloop01/sweep/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/devloop01/sweep/actions/workflows/test.yml)
 
-sweep is a small Go program. Its one dependency is [Bubble Tea](https://github.com/charmbracelet/bubbletea),
-which runs the interactive screen in the terminal (`tui.go`).
+sweep is a small Go program. Its dependencies are [Charm](https://github.com/charmbracelet)'s
+Bubble Tea, Bubbles and Lip Gloss, which run and style the interactive screen (`tui.go`).
 It builds for Apple Silicon Macs only (`//go:build darwin && arm64`).
 
 ## Build and test

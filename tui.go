@@ -13,7 +13,11 @@ import (
 	"syscall"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/devloop01/sweep/internal/sweep"
 )
@@ -188,18 +192,46 @@ func (s *screen) done(path string, err error) {
 // deletion is still running.
 func (s *screen) finished() bool { return s.quitting && s.deletions == 0 }
 
-// view draws the screen for a w×h terminal, one string per line.
-func (s *screen) view(e env, w, h int) []string {
-	head := "sweep  " + folders(len(s.items)) + ", " + human(s.total)
+// look is what view needs from the terminal beyond its size: whether the
+// background is dark, and the spinner's current frame.
+type look struct {
+	dark bool
+	spin string
+}
+
+var (
+	accent = lipgloss.Color("#7D56F4")
+	badge  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFDF5")).Background(accent).Padding(0, 1)
+	faint  = lipgloss.NewStyle().Faint(true)
+	strong = lipgloss.NewStyle().Bold(true)
+	warn   = lipgloss.NewStyle().Foreground(lipgloss.Yellow)
+	good   = lipgloss.NewStyle().Foreground(lipgloss.Green)
+	bad    = lipgloss.NewStyle().Foreground(lipgloss.Red)
+)
+
+// sizeLook is sizeStyle (shared with the plain list) as a Lip Gloss style.
+func sizeLook(b int64) lipgloss.Style {
+	st, code := lipgloss.NewStyle(), sizeStyle(b)
+	switch {
+	case strings.Contains(code, red):
+		st = st.Foreground(lipgloss.Red)
+	case strings.Contains(code, yellow):
+		st = st.Foreground(lipgloss.Yellow)
+	case strings.Contains(code, dim):
+		st = st.Faint(true)
+	}
+	return st.Bold(strings.Contains(code, bold))
+}
+
+// view draws the screen for a w×h terminal, one string per line: a title,
+// the list, a status line, and the keys that do something right now.
+func (s *screen) view(l look, w, h int) []string {
+	head := strong.Render(folders(len(s.items)) + " · " + human(s.total))
 	if s.scanning {
-		head = fmt.Sprintf("sweep  scanning… %s checked, %s found", folders(int(s.checked)), folders(len(s.items)))
+		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %s checked · %s found", folders(int(s.checked)), folders(len(s.items))))
 	}
-	lines := []string{
-		e.paint(bold, clip(head, w-1)),
-		e.paint(dim, clip("↑↓ move   space select   a all   enter delete   q quit", w-1)),
-		"",
-	}
-	s.page = max(h-len(lines)-2, 1)
+	lines := []string{clip(badge.Render("sweep")+"  "+head, w-1), ""}
+	s.page = max(h-len(lines)-3, 1)
 	if s.cursor < s.top {
 		s.top = s.cursor
 	}
@@ -210,43 +242,46 @@ func (s *screen) view(e env, w, h int) []string {
 	if w >= 50 {
 		ageW = 10
 	}
-	room := max(w-2-4-2-ageW-10-1, 1) // cursor, checkbox, gap, age, status column, spare
+	room := max(w-4-2-ageW-10-1, 1) // cursor bar and checkbox, gap, age, status column, spare
+	hl := lipgloss.NewStyle().Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E8E4FA"), lipgloss.Color("#2B2540")))
 	for i := s.top; i < min(s.top+s.page, len(s.items)); i++ {
 		it := s.items[i]
-		mark, path := "  ", fit(it.path, room)
+		row := lipgloss.NewStyle()
+		bar, pathStyle := " ", lipgloss.NewStyle()
 		if i == s.cursor {
-			mark, path = "> ", e.paint(bold, path)
+			row, bar, pathStyle = hl, lipgloss.NewStyle().Foreground(accent).Render("▌"), strong
 		}
+		box := " "
 		switch {
 		case it.selected:
-			mark += e.paint(yellow, "[x]") + " "
+			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("◉")
 		case it.state == ready:
-			mark += "[ ] "
-		default:
-			mark += "    "
+			box = faint.Inherit(row).Render("○")
 		}
-		status, style := human(it.cand.Size), sizeStyle(it.cand.Size)
+		status, style := human(it.cand.Size), sizeLook(it.cand.Size)
 		switch it.state {
 		case deleting:
-			status, style = "deleting…", yellow
+			status, style = l.spin+" deleting", warn
 		case deleted:
-			status, style = "deleted", green
+			status, style = "✓ deleted", good
 		case failed:
-			status, style = "failed", red
+			status, style = "✗ failed", bad
 		}
-		pad := strings.Repeat(" ", max(room-ansi.StringWidth(fit(it.path, room)), 0))
-		when := ""
+		path := fit(it.path, room)
+		cells := pathStyle.Inherit(row).Render(path) + row.Render(strings.Repeat(" ", max(room-ansi.StringWidth(path), 0))+"  ")
 		if ageW > 0 {
-			when = e.paint(dim, fmt.Sprintf("%8s", age(it.cand.Touched, time.Now()))) + "  "
+			cells += faint.Inherit(row).Render(fmt.Sprintf("%8s", age(it.cand.Touched, time.Now()))) + row.Render("  ")
 		}
-		lines = append(lines, mark+path+pad+"  "+when+e.paint(style, fmt.Sprintf("%10s", status)))
+		pad := strings.Repeat(" ", max(10-ansi.StringWidth(status), 0))
+		lines = append(lines, bar+row.Render(" ")+box+row.Render(" ")+cells+style.Inherit(row).Render(pad+status)+row.Render(" "))
 	}
 	if len(s.items) == 0 && s.scanning {
-		lines = append(lines, e.paint(dim, clip("  Looking for folders to clean…", w-1)))
+		lines = append(lines, faint.Render(clip("  Looking for folders to clean…", w-1)))
 	}
-	for len(lines) < h-1 {
+	for len(lines) < h-2 {
 		lines = append(lines, "")
 	}
+
 	var nsel int
 	var selSize int64
 	for _, it := range s.items {
@@ -257,15 +292,56 @@ func (s *screen) view(e env, w, h int) []string {
 	}
 	switch {
 	case s.quitting && s.deletions > 0:
-		lines = append(lines, e.paint(yellow, clip("Finishing deletions…", w-1)))
+		lines = append(lines, clip(l.spin+" "+warn.Render("Finishing deletions…"), w-1))
 	case s.message != "":
-		lines = append(lines, e.paint(red, clip(s.message, w-1)))
+		lines = append(lines, clip(bad.Render(s.message), w-1))
 	case nsel > 0:
-		lines = append(lines, e.paint(yellow, clip("Selected "+folders(nsel)+", "+human(selSize)+" · enter deletes them", w-1)))
+		lines = append(lines, clip(warn.Render("Selected "+folders(nsel)+", "+human(selSize)), w-1))
 	default:
-		lines = append(lines, e.paint(green, clip("Freed "+human(s.freed), w-1)))
+		lines = append(lines, clip(good.Render("Freed "+human(s.freed)), w-1))
 	}
-	return lines
+	return append(lines, s.help(l, w))
+}
+
+// help is the key bar, showing only keys that do something right now.
+func (s *screen) help(l look, w int) string {
+	var here *item
+	if len(s.items) > 0 {
+		here = &s.items[s.cursor]
+	}
+	canSelect := here != nil && here.state == ready
+	nsel := 0
+	for _, it := range s.items {
+		if it.selected {
+			nsel++
+		}
+	}
+	// Keys come from keyNames; help hides a binding that's switched off.
+	bind := func(k, desc string, on bool, names ...string) key.Binding {
+		var keys []string
+		for kn, n := range keyNames {
+			if slices.Contains(names, n) {
+				keys = append(keys, kn)
+			}
+		}
+		b := key.NewBinding(key.WithKeys(keys...), key.WithHelp(k, desc))
+		b.SetEnabled(on)
+		return b
+	}
+	delDesc := "delete"
+	if nsel > 0 {
+		delDesc = "delete " + folders(nsel)
+	}
+	hm := help.New()
+	hm.Styles = help.DefaultStyles(l.dark)
+	hm.SetWidth(w - 1)
+	return hm.ShortHelpView([]key.Binding{
+		bind("↑↓", "move", len(s.items) > 1, "up", "down"),
+		bind("space", "select", canSelect, "space"),
+		bind("a", "all", slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
+		bind("enter", delDesc, !s.quitting && (nsel > 0 || canSelect), "enter"),
+		bind("q", "quit", true, "quit"),
+	})
 }
 
 type result struct {
@@ -319,7 +395,6 @@ type (
 		cands []sweep.Candidate
 		kept  int
 	}
-	tickMsg   struct{}
 	signalMsg struct{}
 )
 
@@ -331,6 +406,9 @@ type model struct {
 	w, h     int
 	progress *sweep.Progress
 	remove   func(sweep.Candidate) result
+	spin     spinner.Model
+	spinning bool // a spinner tick is pending
+	dark     bool // the terminal's background, once it has said
 }
 
 // keyNames maps Bubble Tea's key names to the screen's.
@@ -341,11 +419,7 @@ var keyNames = map[string]string{
 	"q": "quit", "esc": "quit", "ctrl+c": "quit", "ctrl+d": "quit",
 }
 
-func tick() tea.Cmd {
-	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return tickMsg{} })
-}
-
-func (m *model) Init() tea.Cmd { return tick() }
+func (m *model) Init() tea.Cmd { return tea.RequestBackgroundColor }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -374,10 +448,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.s.done(msg.path, msg.err)
 	case signalMsg:
 		m.s.key("quit")
-	case tickMsg:
-		if m.s.scanning {
-			cmds = append(cmds, tick())
+	case tea.BackgroundColorMsg:
+		m.dark = msg.IsDark()
+	case spinner.TickMsg:
+		// The spinner runs while something is going on; each tick also
+		// redraws the scan's folder count.
+		m.spinning = false
+		if m.s.scanning || m.s.deletions > 0 {
+			var cmd tea.Cmd
+			m.spin, cmd = m.spin.Update(msg)
+			cmds, m.spinning = append(cmds, cmd), true
 		}
+	}
+	if !m.spinning && (m.s.scanning || m.s.deletions > 0) {
+		cmds, m.spinning = append(cmds, m.spin.Tick), true
 	}
 	m.s.checked = m.progress.Dirs()
 	if m.s.finished() {
@@ -387,7 +471,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) View() tea.View {
-	v := tea.NewView(strings.Join(m.s.view(m.e, m.w, m.h), "\n"))
+	v := tea.NewView(strings.Join(m.s.view(look{m.dark, m.spin.View()}, m.w, m.h), "\n"))
 	v.AltScreen = true
 	return v
 }
@@ -400,7 +484,7 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	}
 	w, h := e.size()
 	sem := make(chan struct{}, max(e.workers, 1)) // deletions at once
-	m := &model{s: s, e: e, w: w, h: h, progress: &sweep.Progress{}, remove: func(c sweep.Candidate) result {
+	m := &model{s: s, e: e, w: w, h: h, dark: true, progress: &sweep.Progress{}, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent))), remove: func(c sweep.Candidate) result {
 		sem <- struct{}{}
 		defer func() { <-sem }()
 		deleted, errs := sweep.Remove(r, t, []sweep.Candidate{c}, 1)
