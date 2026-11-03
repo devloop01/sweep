@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Fixtures shared by scan_test and remove_test. All paths are relative to
@@ -245,6 +246,14 @@ func TestSizeIsAllocated(t *testing.T) {
 	c := scanned(root, DefaultTargets(), 4)
 	if len(c) != 1 || c[0].Size < 100_000 || c[0].Size > 1<<20 {
 		t.Errorf("got %+v, want one candidate of roughly 100 KB", c)
+	}
+	old := time.Now().Add(-48 * time.Hour)
+	must(t, os.Chtimes(filepath.Join(root, "a/node_modules/real"), old, old))
+	must(t, os.Chtimes(filepath.Join(root, "a/node_modules/sparse"), old, old))
+	newest := time.Now().Add(-time.Hour).Truncate(time.Second)
+	must(t, os.Chtimes(filepath.Join(root, "a/node_modules"), newest, newest))
+	if c := scanned(root, DefaultTargets(), 4); !c[0].Touched.Equal(newest) {
+		t.Errorf("Touched = %v, want the newest mtime inside, %v", c[0].Touched, newest)
 	}
 }
 

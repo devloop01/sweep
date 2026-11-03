@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 // Progress lets another goroutine watch a running Scan.
@@ -40,6 +41,10 @@ func (p *Progress) Current() string {
 type Candidate struct {
 	Path string // absolute
 	Size int64  // allocated bytes, like du; each hard-linked file counted once per run
+
+	// Touched is the newest modification time of anything inside, so an
+	// install or build shows up, like npkill's "last_mod".
+	Touched time.Time
 }
 
 // Scan finds the target folders under root, which must already be resolved
@@ -87,7 +92,7 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 					for _, b := range m.shared {
 						size += b
 					}
-					progress.OnFound(Candidate{Path: m.path, Size: size})
+					progress.OnFound(Candidate{Path: m.path, Size: size, Touched: m.touched})
 				}
 				mu.Lock()
 				results = append(results, m)
@@ -110,7 +115,7 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 				size += b
 			}
 		}
-		cands = append(cands, Candidate{Path: m.path, Size: size})
+		cands = append(cands, Candidate{Path: m.path, Size: size, Touched: m.touched})
 	}
 	slices.SortFunc(cands, func(a, b Candidate) int {
 		return cmp.Or(cmp.Compare(b.Size, a.Size), strings.Compare(a.Path, b.Path))
@@ -223,6 +228,7 @@ type measured struct {
 	own     int64           // blocks of everything not hard-linked
 	shared  map[inode]int64 // blocks of hard-linked files, by inode
 	otherFS bool            // something inside is on another volume
+	touched time.Time       // newest mtime inside
 }
 
 // measure adds up allocated blocks under p like `du -sk`, without
@@ -252,6 +258,9 @@ func measure(p string, progress *Progress) measured {
 		if uint64(st.Dev) != pDev {
 			m.otherFS = true
 			return filepath.SkipAll
+		}
+		if t := info.ModTime(); t.After(m.touched) {
+			m.touched = t
 		}
 		b := st.Blocks * 512
 		if !d.IsDir() && st.Nlink > 1 {

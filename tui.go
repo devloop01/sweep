@@ -189,7 +189,11 @@ func (s *screen) view(e env, w, h int) []string {
 	if s.cursor >= s.top+s.page {
 		s.top = s.cursor - s.page + 1
 	}
-	room := max(w-2-4-2-10-1, 1) // cursor, checkbox, gap, status column, spare
+	ageW := 0 // "3mo ago" column plus its gap, only where there's room for it
+	if w >= 50 {
+		ageW = 10
+	}
+	room := max(w-2-4-2-ageW-10-1, 1) // cursor, checkbox, gap, age, status column, spare
 	for i := s.top; i < min(s.top+s.page, len(s.items)); i++ {
 		it := s.items[i]
 		mark, path := "  ", fit(it.path, room)
@@ -214,7 +218,11 @@ func (s *screen) view(e env, w, h int) []string {
 			status, style = "failed", red
 		}
 		pad := strings.Repeat(" ", max(room-utf8.RuneCountInString(fit(it.path, room)), 0))
-		lines = append(lines, mark+path+pad+"  "+e.paint(style, fmt.Sprintf("%10s", status)))
+		when := ""
+		if ageW > 0 {
+			when = e.paint(dim, fmt.Sprintf("%8s", age(it.cand.Touched, time.Now()))) + "  "
+		}
+		lines = append(lines, mark+path+pad+"  "+when+e.paint(style, fmt.Sprintf("%10s", status)))
 	}
 	if len(s.items) == 0 && s.scanning {
 		lines = append(lines, e.paint(dim, clip("  Looking for folders to clean…", w-1)))
@@ -397,6 +405,23 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 			}
 		case <-tick.C:
 		}
+	}
+}
+
+// age says how long ago t was, short enough for an 8-wide column.
+func age(t, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	switch d := now.Sub(t); {
+	case d < 24*time.Hour:
+		return "today"
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", d/(24*time.Hour))
+	case d < 365*24*time.Hour:
+		return fmt.Sprintf("%dmo ago", d/(30*24*time.Hour))
+	default:
+		return fmt.Sprintf("%dy ago", d/(365*24*time.Hour))
 	}
 }
 

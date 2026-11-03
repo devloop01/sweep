@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/devloop01/sweep/internal/sweep"
@@ -183,6 +184,21 @@ func TestScreenView(t *testing.T) {
 	lines := s.view(env{}, 60, 24)
 	if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "…") && strings.Contains(l, "/node_modules") }) {
 		t.Error("long path not cut from the left")
+	}
+}
+
+func TestAge(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		ago  time.Duration
+		want string
+	}{{time.Hour, "today"}, {3 * 24 * time.Hour, "3d ago"}, {70 * 24 * time.Hour, "2mo ago"}, {800 * 24 * time.Hour, "2y ago"}} {
+		if got := age(now.Add(-c.ago), now); got != c.want {
+			t.Errorf("age(-%v) = %q, want %q", c.ago, got, c.want)
+		}
+	}
+	if age(time.Time{}, now) != "" {
+		t.Error("zero time should be blank")
 	}
 }
 
