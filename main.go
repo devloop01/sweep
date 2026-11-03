@@ -39,8 +39,8 @@ first:
   ↑/↓ or j/k    move (g/G: top/bottom)
   space         select or unselect the highlighted folder
   a             select or unselect all
-  enter         delete the selected folders right away (with none
-                selected: the highlighted one)
+  enter         delete the selected folders (with none selected: the
+                highlighted one), after you confirm: y or Delete
   q             quit
 
 Flags:
