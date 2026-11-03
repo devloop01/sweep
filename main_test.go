@@ -349,7 +349,7 @@ func TestKeptFoldersAreReported(t *testing.T) {
 		}
 	}
 	code, out, _ := sweepIn(t, "", false, "-y", root)
-	if code != 0 || !strings.Contains(out, "Skipped 1 folder that may hold real files") || strings.Contains(out, "p/dist") || !strings.Contains(out, "Deleted 3 folders") {
+	if code != 0 || !strings.Contains(out, "Skipped 1 folder that may hold your files") || strings.Contains(out, "p/dist") || !strings.Contains(out, "Deleted 3 folders") {
 		t.Errorf("code %d, out:\n%s", code, out)
 	}
 	if _, err := os.Stat(filepath.Join(root, "p/dist/app.js")); err != nil {
