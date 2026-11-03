@@ -64,14 +64,13 @@ type env struct {
 	homes          []string // every path naming the home folder
 	system         []string // refused system roots
 	stdin          io.Reader
-	isTTY          bool                               // stdin is a terminal
-	color          bool                               // stdout takes ANSI colors
-	cols           int                                // stdout's width; 0 when it isn't a terminal
-	raw            func() (restore func(), err error) // raw terminal input for the interactive screen; nil in tests
-	size           func() (cols, rows int)            // terminal size for the interactive screen
-	afterScan      func()                             // tests: called when the interactive scan ends
-	live           bool                               // stderr is a terminal: show scan progress
-	flushInput     func()                             // discards type-ahead before the prompt; nil in tests
+	isTTY          bool                    // stdin is a terminal
+	color          bool                    // stdout takes ANSI colors
+	cols           int                     // stdout's width; 0 when it isn't a terminal
+	size           func() (cols, rows int) // terminal size for the interactive screen
+	afterScan      func()                  // tests: called when the interactive scan ends
+	live           bool                    // stderr is a terminal: show scan progress
+	flushInput     func()                  // discards type-ahead before the prompt; nil in tests
 	stdout, stderr io.Writer
 	workers        int
 }
@@ -110,7 +109,6 @@ func main() {
 	}
 	code := run(os.Args[1:], env{
 		configPath: configPath(), cols: cols,
-		raw:    func() (func(), error) { return makeRaw(os.Stdin) },
 		size:   func() (int, int) { return termSize(os.Stdout) },
 		asRoot: os.Geteuid() == 0, homes: sweep.Homes(), system: sweep.SystemRoots,
 		stdin: os.Stdin, isTTY: isTerminal(os.Stdin), flushInput: flushTypeahead,
