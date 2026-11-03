@@ -60,6 +60,8 @@ type screen struct {
 	deletions int       // in progress
 	moved     bool      // a key was pressed; until then the cursor stays on the top row
 	topSince  time.Time // when the top row last changed while the cursor sat there
+	ask       []string  // folders the confirm dialog asks about; nil when it's closed
+	yes       bool      // the dialog's Delete button has focus (Cancel does at first)
 }
 
 // add puts a folder the scan just found into the list, biggest first.
@@ -116,8 +118,11 @@ func (s *screen) find(path string) int {
 // key applies one key. It returns the folders to delete, if any. The cursor
 // never moves on its own, so a held-down enter deletes one folder.
 func (s *screen) key(k string) (del []sweep.Candidate) {
-	if k == "quit" {
-		s.quitting = true
+	if s.ask != nil && k != "quit" {
+		return s.answer(k)
+	}
+	if k == "quit" || k == "esc" {
+		s.quitting, s.ask = true, nil
 	}
 	if len(s.items) == 0 {
 		return nil
@@ -155,22 +160,46 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 			s.items[i].selected = !all && s.items[i].state == ready
 		}
 	case "enter":
+		// Ask first. The dialog keeps the folders' paths, so a re-sort
+		// while it's open can't change what gets deleted.
 		if s.quitting {
 			return nil
 		}
 		picked := slices.ContainsFunc(s.items, func(it item) bool { return it.selected })
-		for i := range s.items {
-			it := &s.items[i]
+		for i, it := range s.items {
 			if it.state == ready && (it.selected || !picked && i == s.cursor) {
+				s.ask = append(s.ask, it.cand.Path)
+			}
+		}
+		s.yes = false
+	}
+	return nil
+}
+
+// answer applies a key while the confirm dialog is open. Cancel has focus
+// first, so a held-down enter opens the dialog and then closes it.
+func (s *screen) answer(k string) (del []sweep.Candidate) {
+	switch k {
+	case "left", "right":
+		s.yes = !s.yes
+		return nil
+	case "enter", "yes":
+		if !s.yes && k == "enter" {
+			break
+		}
+		for _, p := range s.ask {
+			if it := &s.items[s.find(p)]; it.state == ready {
 				it.state, it.selected = deleting, false
 				s.deletions++
 				del = append(del, it.cand)
 			}
 		}
-		if len(del) > 0 {
-			s.message = ""
-		}
+		s.message = ""
+	case "no", "esc":
+	default:
+		return nil // other keys leave the dialog open
 	}
+	s.ask = nil
 	return del
 }
 
@@ -300,11 +329,59 @@ func (s *screen) view(l look, w, h int) []string {
 	default:
 		lines = append(lines, clip(good.Render("Freed "+human(s.freed)), w-1))
 	}
-	return append(lines, s.help(l, w))
+	lines = append(lines, s.help(l, w))
+	if s.ask == nil {
+		return lines
+	}
+	box := s.dialog(l)
+	bw, bh := lipgloss.Width(box), lipgloss.Height(box)
+	out := lipgloss.NewCompositor(
+		lipgloss.NewLayer(strings.Join(lines, "\n")),
+		lipgloss.NewLayer(box).X(max((w-bw)/2, 0)).Y(max((h-bh)/2, 0)).Z(1),
+	).Render()
+	lines = strings.Split(out, "\n")
+	for i := range lines {
+		lines[i] = clip(lines[i], w-1)
+	}
+	return lines
+}
+
+// dialog is the confirm box drawn over the list.
+func (s *screen) dialog(l look) string {
+	var size int64
+	for _, p := range s.ask {
+		size += s.items[s.find(p)].cand.Size
+	}
+	title := "Delete " + folders(len(s.ask)) + "?"
+	if len(s.ask) == 1 {
+		title = "Delete " + s.items[s.find(s.ask[0])].path + "?"
+	}
+	button := func(label string, focus bool) string {
+		st := lipgloss.NewStyle().Padding(0, 2).Foreground(lipgloss.LightDark(l.dark)(lipgloss.Color("#4A4A4A"), lipgloss.Color("#B2B2B2"))).
+			Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E4E4E4"), lipgloss.Color("#3A3A3A")))
+		if focus {
+			st = st.Bold(true).Foreground(lipgloss.Color("#FFFDF5")).Background(accent)
+		}
+		return st.Render(label)
+	}
+	body := lipgloss.JoinVertical(lipgloss.Center,
+		strong.Render(fit(title, 50)),
+		faint.Render(human(size)+" · comes back with the next install or build"),
+		"",
+		button("Delete", s.yes)+"  "+button("Cancel", !s.yes),
+	)
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 3).Render(body)
 }
 
 // help is the key bar, showing only keys that do something right now.
 func (s *screen) help(l look, w int) string {
+	hm := help.New()
+	hm.Styles = help.DefaultStyles(l.dark)
+	hm.SetWidth(w - 1)
+	if s.ask != nil {
+		show := func(k, desc string) key.Binding { return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc)) }
+		return hm.ShortHelpView([]key.Binding{show("←→", "choose"), show("enter", "confirm"), show("y", "delete"), show("n", "cancel")})
+	}
 	var here *item
 	if len(s.items) > 0 {
 		here = &s.items[s.cursor]
@@ -332,9 +409,6 @@ func (s *screen) help(l look, w int) string {
 	if nsel > 0 {
 		delDesc = "delete " + folders(nsel)
 	}
-	hm := help.New()
-	hm.Styles = help.DefaultStyles(l.dark)
-	hm.SetWidth(w - 1)
 	return hm.ShortHelpView([]key.Binding{
 		bind("↑↓", "move", len(s.items) > 1, "up", "down"),
 		bind("space", "select", canSelect, "space"),
@@ -416,7 +490,9 @@ var keyNames = map[string]string{
 	"up": "up", "k": "up", "down": "down", "j": "down",
 	"pgup": "pgup", "pgdown": "pgdn", "home": "home", "g": "home", "end": "end", "G": "end",
 	"space": "space", "enter": "enter", "a": "all",
-	"q": "quit", "esc": "quit", "ctrl+c": "quit", "ctrl+d": "quit",
+	"q": "quit", "esc": "esc", "ctrl+c": "quit", "ctrl+d": "quit",
+	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "right", "shift+tab": "left",
+	"y": "yes", "n": "no",
 }
 
 func (m *model) Init() tea.Cmd { return tea.RequestBackgroundColor }
@@ -503,7 +579,10 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	p := tea.NewProgram(m, tea.WithInput(e.stdin), tea.WithOutput(e.stdout), tea.WithWindowSize(w, h), tea.WithoutSignalHandler())
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(sigs)
+	defer func() {
+		signal.Stop(sigs)
+		close(sigs) // ends the goroutine below; nothing sends after Stop
+	}()
 	go func() {
 		for range sigs {
 			p.Send(signalMsg{})
