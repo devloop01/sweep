@@ -270,10 +270,11 @@ func TestScreenView(t *testing.T) {
 // its folders.
 func TestScreenProjects(t *testing.T) {
 	s := &screen{tree: true}
-	mono := &project{"/r/mono", "mono", "Turborepo"}
-	s.addIn(sweep.Candidate{Path: "/r/mono/node_modules", Size: 5}, "mono/node_modules", mono)
+	// A new *project per folder, as the scan sends them.
+	mono := func() *project { return &project{sweep.Project{Dir: "/r/mono", Kind: "Turborepo"}, "mono"} }
+	s.addIn(sweep.Candidate{Path: "/r/mono/node_modules", Size: 5}, "mono/node_modules", mono())
 	s.add(sweep.Candidate{Path: "/r/big/node_modules", Size: 8}, "big/node_modules")
-	s.addIn(sweep.Candidate{Path: "/r/mono/apps/web/.next", Size: 4}, "mono/apps/web/.next", mono)
+	s.addIn(sweep.Candidate{Path: "/r/mono/apps/web/.next", Size: 4}, "mono/apps/web/.next", mono())
 	// mono's 9 bytes beat big's 8: header, its two folders, then big.
 	if len(s.rows) != 4 || !s.rows[0].head || s.rows[0].n != 2 || !s.rows[2].last || s.items[s.rows[3].i].path != "big/node_modules" {
 		t.Fatalf("rows %+v, items %+v", s.rows, s.items)
@@ -344,6 +345,24 @@ func TestScreenHelpAndReveal(t *testing.T) {
 	s.key("enter")
 	if s.key("help"); s.helping {
 		t.Error("? opened the key list over the confirm dialog")
+	}
+	// A signal or end of input quits even with the key list open.
+	s.ask = nil
+	s.key("help")
+	if s.quit(); !s.quitting || s.helping {
+		t.Error("quit() with the key list open didn't quit")
+	}
+}
+
+// With one folder listed, a bigger one arriving mustn't slide under the
+// cursor once a key has been pressed.
+func TestScreenCursorFollowsOnlyFolder(t *testing.T) {
+	s := &screen{scanning: true}
+	s.add(sweep.Candidate{Path: "/r/a", Size: 1}, "a")
+	s.key("down")
+	s.add(sweep.Candidate{Path: "/r/b", Size: 9}, "b")
+	if got := s.items[s.rows[s.cursor].i].path; got != "a" {
+		t.Errorf("cursor on %q, want a", got)
 	}
 }
 

@@ -240,7 +240,7 @@ func run(args []string, e env) int {
 	// Kept folders aren't listed, but a dist/ that survives shouldn't be a mystery.
 	skipped := func() {
 		if len(kept) > 0 {
-			fmt.Fprintf(e.stdout, "Skipped %s that may hold your files (outside git, or tracked by git).\n", folders(len(kept)))
+			fmt.Fprintln(e.stdout, skipped(len(kept)))
 		}
 	}
 	if len(cands) == 0 {
@@ -375,4 +375,9 @@ func printable(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// skipped says how many build folders sweep left alone.
+func skipped(n int) string {
+	return fmt.Sprintf("Skipped %s that may hold your files (outside git, or tracked by git).", folders(n))
 }
