@@ -64,7 +64,7 @@ Nx, pnpm or npm workspaces) as one project. Space or enter on a project's
 name acts on all its folders, ←/→ collapse and open one, tab jumps to the
 next, and `c` collapses or opens them all.
 
-`s` sorts by size, last change, or name. `o` shows a folder in Finder, `?`
+`s` sorts by size, name, or last change. `o` shows a folder in Finder, `?`
 lists every key, and `q` quits.
 
 To just look, or to clean everything at once:
