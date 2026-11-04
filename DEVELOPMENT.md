@@ -46,7 +46,7 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |
 | `internal/sweep/guard.go` | Which folders sweep refuses to run in |
 | `internal/sweep/scan.go` | Walking, matching, sizes, and the re-check before delete (`Vet`) |
-| `internal/sweep/git.go` | Whether a target may hold git-tracked files |
+| `internal/sweep/git.go` | Whether a target may hold real files: tracked, or build output git doesn't ignore |
 | `internal/sweep/project.go` | Which project a folder belongs to, for grouping on the screen |
 | `internal/sweep/remove.go` | Deleting the vetted folders through an `os.Root` |
 | `install.sh` | The `curl … \| sh` installer |
@@ -69,8 +69,11 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 - **Folders that may hold real files are kept** (`keep` in `git.go`). Inside
   a git repo, a target is kept if `git ls-files` lists anything in it (a
   committed `dist`, scripts in `build`) or if git can't answer: it isn't
-  installed, times out, or the repo is broken. Outside a repo, git isn't run
-  and only `dist`, `build` and `out` are kept, since without git there's no
+  installed, times out, or the repo is broken. `dist`, `build`, `out` and
+  `target` are also kept unless `git check-ignore -v` shows a rule that names
+  the folder: untracked but not ignored may be new work, and a catch-all `*`
+  (a repo around the whole home folder) says nothing about it. Outside a
+  repo, git isn't run and those four are kept, since without git there's no
   way to tell they're only build output. Kept folders aren't listed; sweep
   prints how many it skipped. Checked during the scan and again before
   deleting.

@@ -82,10 +82,11 @@ for free:
   `storybook-static` and `.vercel/output`
 - **Python caches:** `.pytest_cache` `.mypy_cache` `.ruff_cache`
 - **Build output:** `dist` `build` `out`, and `target` (Rust, Maven), but
-  only in a git repo where git confirms nothing inside is tracked. Projects
-  sometimes keep real files in these (a committed `dist`, scripts in
-  `build`), so outside git, or when git tracks files in them, sweep skips
-  them and says how many it skipped.
+  only in a git repo whose `.gitignore` lists them, with nothing inside
+  tracked. Projects sometimes keep real files in these (a committed `dist`,
+  scripts in `build`, new files not committed yet), so outside git, or when
+  git tracks or doesn't ignore them, sweep skips them and says how many it
+  skipped.
 
 sweep never deletes anything that would make you set up a project again, like
 `.vercel` or `.netlify` (your project link) or `.wrangler` (local Cloudflare
