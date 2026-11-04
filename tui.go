@@ -124,8 +124,8 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 	if k == "quit" || k == "esc" {
 		s.quitting, s.ask = true, nil
 	}
-	if len(s.items) == 0 {
-		return nil
+	if len(s.items) == 0 || k == "left" || k == "right" || k == "yes" || k == "no" {
+		return nil // dialog keys; outside it they must not unpin the cursor
 	}
 	if !s.moved {
 		s.moved = true
@@ -332,7 +332,7 @@ func (s *screen) view(l look, w, h int) []string {
 	if s.ask == nil {
 		return lines
 	}
-	box := s.dialog(l)
+	box := s.dialog(l, w)
 	bw, bh := lipgloss.Width(box), lipgloss.Height(box)
 	out := lipgloss.NewCompositor(
 		lipgloss.NewLayer(strings.Join(lines, "\n")),
@@ -342,18 +342,19 @@ func (s *screen) view(l look, w, h int) []string {
 	for i := range lines {
 		lines[i] = clip(lines[i], w-1)
 	}
-	return lines
+	return lines[:min(len(lines), max(h, 1))]
 }
 
 // dialog is the confirm box drawn over the list.
-func (s *screen) dialog(l look) string {
+func (s *screen) dialog(l look, w int) string {
 	var size int64
 	for _, p := range s.ask {
 		size += s.items[s.find(p)].cand.Size
 	}
 	what := folders(len(s.ask))
 	if len(s.ask) == 1 {
-		what = fit(s.items[s.find(s.ask[0])].path, 40)
+		// The box adds about 28 columns around the path.
+		what = fit(s.items[s.find(s.ask[0])].path, min(40, max(w-28, 8)))
 	}
 	title := "Delete " + what + " (" + human(size) + ")?"
 	button := func(label string, focus bool) string {
