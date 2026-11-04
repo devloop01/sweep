@@ -414,6 +414,56 @@ func TestScreenSort(t *testing.T) {
 	}
 }
 
+// Clicks: a row moves the cursor, its checkbox selects it, ▾ folds a
+// project, a column name sorts by it, and the dialog's buttons work. A click
+// hits the folder drawn there, even if the list re-sorted since.
+func TestScreenClick(t *testing.T) {
+	s := newScreen(5)
+	s.view(look{}, 80, 24)
+	d := s.drawn
+	if s.click(30, d.list+2); s.cursor != 2 || s.items[2].selected {
+		t.Fatalf("click on a row: cursor %d", s.cursor)
+	}
+	if s.click(4, d.list+3); s.cursor != 3 || !s.items[3].selected {
+		t.Fatal("click on a checkbox should select it")
+	}
+	s.add(sweep.Candidate{Path: "/r/new", Size: 99 << 20}, "new") // re-sorts, not drawn yet
+	if s.click(30, d.list); s.items[s.rows[s.cursor].i].path != "p00/node_modules" {
+		t.Errorf("click hit %q, want the folder drawn there", s.items[s.rows[s.cursor].i].path)
+	}
+	s.view(look{}, 80, 24)
+	if s.click(d.cols[0][0]+1, s.drawn.head); s.order != byName {
+		t.Errorf("click on Folder: order %d", s.order)
+	}
+	if s.click(s.drawn.cols[1][0]+1, s.drawn.head); s.order != byRecent {
+		t.Errorf("click on Touched: order %d", s.order)
+	}
+
+	s.key("enter")
+	s.view(look{}, 80, 24)
+	if s.drawn.buttons < 0 {
+		t.Fatal("dialog buttons not found")
+	}
+	if s.click(s.drawn.can[0]+1, s.drawn.buttons); s.ask != nil {
+		t.Error("Cancel didn't close the dialog")
+	}
+	s.key("enter")
+	s.view(look{}, 80, 24)
+	if del := s.click(s.drawn.del[0]+1, s.drawn.buttons); len(del) != 1 {
+		t.Errorf("Delete deleted %v", del)
+	}
+
+	// ▾ on a project's row folds it.
+	p := &screen{tree: true}
+	proj := &project{sweep.Project{Dir: "/r/a"}, "a"}
+	p.addIn(sweep.Candidate{Path: "/r/a/node_modules", Size: 2}, "a/node_modules", proj)
+	p.addIn(sweep.Candidate{Path: "/r/a/.next", Size: 1}, "a/.next", proj)
+	p.view(look{}, 80, 24)
+	if p.click(8, p.drawn.list); len(p.rows) != 1 {
+		t.Errorf("click on ▾: %d rows", len(p.rows))
+	}
+}
+
 // ? opens the key list; the next key only closes it. o asks to show the
 // highlighted folder in Finder.
 func TestScreenHelpAndReveal(t *testing.T) {
