@@ -172,6 +172,12 @@ func TestScreenCursorStartsAtTop(t *testing.T) {
 	if s.cursor != 0 {
 		t.Fatalf("cursor on row %d, want the top", s.cursor)
 	}
+	for _, k := range []string{"left", "right", "yes", "no"} { // dialog keys, no dialog open
+		s.key(k)
+	}
+	if s.moved {
+		t.Fatal("a dialog key unpinned the cursor")
+	}
 	if c := s.key("enter"); c != nil {
 		t.Fatalf("enter right after the top changed deleted %v", c)
 	}
@@ -246,6 +252,16 @@ func TestScreenView(t *testing.T) {
 	lines := s.view(look{}, 60, 24)
 	if !slices.ContainsFunc(lines, func(l string) bool { return strings.Contains(l, "…") && strings.Contains(l, "/node_modules") }) {
 		t.Error("long path not cut from the left")
+	}
+	// The dialog for that long path fits a narrow terminal, and a short one
+	// doesn't grow the frame.
+	s.ask = []string{s.items[3].cand.Path}
+	box := escapes.ReplaceAllString(strings.Join(s.view(look{}, 44, 24), "\n"), "")
+	if !strings.Contains(box, "Cancel ") || !strings.Contains(box, ")?") {
+		t.Errorf("dialog cut off at 44 columns:\n%s", box)
+	}
+	if n := len(s.view(look{}, 44, 4)); n != 4 {
+		t.Errorf("dialog made a 4-line terminal %d lines tall", n)
 	}
 }
 
