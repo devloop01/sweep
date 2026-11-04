@@ -86,14 +86,15 @@ type screen struct {
 	page      int // visible rows, from the last view
 	quitting  bool
 	message   string
-	deletions int       // in progress
-	moved     bool      // a key was pressed; until then the cursor stays on the top row
-	topSince  time.Time // when the top row last changed while the cursor sat there
-	ask       []string  // folders the confirm dialog asks about; nil when it's closed
-	tree      bool      // folders are listed under their project (t)
-	helping   bool      // the key list (?) is open
-	reveal    string    // a folder to show in Finder (o), for the model to open
-	yes       bool      // the dialog's Delete button has focus (Cancel does at first)
+	deletions int             // in progress
+	moved     bool            // a key was pressed; until then the cursor stays on the top row
+	topSince  time.Time       // when the top row last changed while the cursor sat there
+	ask       []string        // folders the confirm dialog asks about; nil when it's closed
+	tree      bool            // folders are listed under their project (t)
+	folded    map[string]bool // projects collapsed to one row, by folder
+	helping   bool            // the key list (?) is open
+	reveal    string          // a folder to show in Finder (o), for the model to open
+	yes       bool            // the dialog's Delete button has focus (Cancel does at first)
 }
 
 // add puts a folder the scan just found into the list, biggest first.
@@ -155,6 +156,9 @@ func (s *screen) sort() {
 		if many && (i == 0 || s.group(s.items[i-1]) != g) {
 			s.rows = append(s.rows, row{i: i, n: n[g], head: true})
 		}
+		if many && s.folded[it.proj.Dir] {
+			continue
+		}
 		s.rows = append(s.rows, row{i: i, n: 1, child: many, last: many && (i+1 == len(s.items) || s.group(s.items[i+1]) != g)})
 	}
 	switch {
@@ -207,8 +211,8 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 	if k == "quit" || k == "esc" {
 		s.quitting, s.ask = true, nil
 	}
-	if len(s.items) == 0 || k == "left" || k == "right" || k == "yes" || k == "no" {
-		return nil // dialog keys; outside it they must not unpin the cursor
+	if len(s.items) == 0 || k == "yes" || k == "no" || !s.tree && (k == "left" || k == "right" || k == "next" || k == "prev" || k == "fold") {
+		return nil // keys that do nothing here must not unpin the cursor
 	}
 	if !s.moved {
 		s.moved = true
@@ -244,6 +248,52 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 		for i := range s.items {
 			s.items[i].selected = !all && s.items[i].state == ready
 		}
+	case "left", "right", "fold":
+		// Collapse or open the cursor's project (c: every project). From a
+		// folder inside it, the cursor moves up to the project's row.
+		dir := ""
+		if it := s.items[s.rows[s.cursor].i]; it.proj != nil && (s.rows[s.cursor].head || s.rows[s.cursor].child) {
+			dir = it.proj.Dir
+		}
+		if s.folded == nil {
+			s.folded = map[string]bool{}
+		}
+		switch {
+		case k == "fold":
+			// Collapse all, or open all if they all are.
+			all := true
+			for _, r := range s.rows {
+				all = all && (!r.head || s.folded[s.items[r.i].proj.Dir])
+			}
+			for _, r := range s.rows {
+				if r.head {
+					s.folded[s.items[r.i].proj.Dir] = !all
+				}
+			}
+		case dir == "":
+			return nil
+		default:
+			s.folded[dir] = k == "left"
+		}
+		at := s.rowID(s.rows[s.cursor])
+		if dir != "" && s.folded[dir] {
+			at = "project:" + dir
+		}
+		s.sort()
+		s.cursor = max(slices.IndexFunc(s.rows, func(r row) bool { return s.rowID(r) == at }), 0)
+	case "next", "prev":
+		// Jump to the next project's row, or back to the previous one (from
+		// a folder inside a project, back to its row).
+		step := 1
+		if k == "prev" {
+			step = -1
+		}
+		for i := s.cursor + step; i >= 0 && i < len(s.rows); i += step {
+			if s.rows[i].head {
+				s.cursor = i
+				break
+			}
+		}
 	case "tree":
 		// Stay on the same folder; from a project's row, its first one.
 		at := s.items[s.rows[s.cursor].i].cand.Path
@@ -278,7 +328,7 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 // first, so a held-down enter opens the dialog and then closes it.
 func (s *screen) answer(k string) (del []sweep.Candidate) {
 	switch k {
-	case "left", "right":
+	case "left", "right", "next", "prev":
 		s.yes = !s.yes
 		return nil
 	case "enter", "yes":
@@ -446,7 +496,11 @@ func (s *screen) view(l look, w, h int) []string {
 		switch {
 		case r.head:
 			kind := "  " + it.proj.Kind
-			name := fit(it.proj.name, max(room-ansi.StringWidth(kind), 1))
+			arrow := "▾ "
+			if s.folded[it.proj.Dir] {
+				arrow = "▸ "
+			}
+			name := arrow + fit(it.proj.name, max(room-2-ansi.StringWidth(kind), 1))
 			kind = ansi.Truncate(kind, room-ansi.StringWidth(name), "")
 			cells = strong.Inherit(row).Render(name) + faint.Inherit(row).Render(kind) +
 				row.Render(strings.Repeat(" ", max(room-ansi.StringWidth(name+kind), 0))+"  ")
@@ -570,6 +624,9 @@ func keyList(l look) string {
 		{"a", "select all, or none"},
 		{"enter", "delete the selected folders, or the highlighted one"},
 		{"t", "group folders by project"},
+		{"← → h l", "collapse or open a project"},
+		{"tab ⇧tab", "next or previous project"},
+		{"c", "collapse or open all projects"},
 		{"o", "show the folder in Finder"},
 		{"q esc", "quit"},
 	} {
@@ -703,7 +760,7 @@ var keyNames = map[string]string{
 	"pgup": "pgup", "pgdown": "pgdn", "home": "home", "g": "home", "end": "end", "G": "end",
 	"space": "space", "enter": "enter", "a": "all",
 	"q": "quit", "esc": "esc", "ctrl+c": "quit", "ctrl+d": "quit",
-	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "right", "shift+tab": "left",
+	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "next", "shift+tab": "prev", "c": "fold",
 	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help",
 }
 
