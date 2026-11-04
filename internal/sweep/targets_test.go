@@ -15,7 +15,8 @@ import (
 // means changing this test too, on purpose.
 func TestDefaultTargets(t *testing.T) {
 	want := []string{"node_modules", ".svelte-kit", ".turbo", ".next", ".nuxt", ".output", ".astro", ".vite",
-		".parcel-cache", ".angular", ".docusaurus", ".nx", ".vinxi", "storybook-static", "dist", "build", "out", ".vercel/output"}
+		".parcel-cache", ".angular", ".docusaurus", ".nx", ".vinxi", "storybook-static",
+		".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build", "out", "target", ".vercel/output"}
 	if got := defaultEntries(); !slices.Equal(got, want) {
 		t.Errorf("defaultEntries() = %q\nwant %q", got, want)
 	}
