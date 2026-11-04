@@ -286,7 +286,7 @@ func TestHardLinksCountedOnce(t *testing.T) {
 		t.Errorf("biggest is %s, want %s", first[0].Path, a)
 	}
 	for range 5 {
-		if again := scanned(root, DefaultTargets(), 4); !slices.Equal(again, first) {
+		if again := scanned(root, DefaultTargets(), 4); !slices.EqualFunc(again, first, func(a, b Candidate) bool { return a.Path == b.Path && a.Size == b.Size }) {
 			t.Fatalf("sizes not deterministic: %+v vs %+v", again, first)
 		}
 	}

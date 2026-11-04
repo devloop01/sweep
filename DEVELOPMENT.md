@@ -88,9 +88,12 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
 - **Re-check before delete.** Each folder must still be strictly inside DIR,
   reached without going through a symlink, a real directory on the same
   volume, and still a target. Deletion then goes through an `os.Root` opened
-  before the scan, so a folder swapped for a symlink at the last moment can't
-  lead outside DIR. Known limit: inside DIR, that race could still redirect a
-  delete to another target-named folder in DIR (see `remove.go`).
+  before the scan, so nothing can lead outside DIR, and it deletes a folder
+  only if it's the very one the scan saw (same device and inode), so a
+  symlink or rename swapped in at the last moment can't redirect it to
+  another folder inside DIR either. Known limit: a different folder swapped
+  into the target's exact place between that check and the delete (see
+  `remove.go`).
 - **Interactive screen** (`tui.go`, when stdin and stdout are terminals and
   neither `-n` nor `-y` is given). It opens at once and the scan fills it in
   (`Progress.OnFound`). Space or enter selects (enter on a project's row

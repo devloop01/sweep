@@ -34,10 +34,14 @@ var beforeRemove = func(path string) {}
 // It returns the candidates actually deleted (in input order) and one error
 // per failed deletion.
 //
-// Deletion goes through r, so a folder swapped for a symlink after Vet can't
-// lead outside root. ponytail: inside root, Root still follows relative
-// symlinks, so that race could redirect a delete to another folder with a
-// target name within root. Closing it needs O_NOFOLLOW at every level.
+// A folder can be swapped between Vet and the delete. So the delete opens
+// the target's parent (through r, so never outside root), holds it open, and
+// deletes the target only if it's the very folder the scan saw (same device
+// and inode). A symlink or rename anywhere on the path leads to some other
+// folder, which is refused. ponytail: what's left is a different folder
+// swapped into the target's exact place between that check and the delete;
+// renaming it aside first and checking again would close that. Candidates
+// not from Scan (no scanned folder to compare) are refused.
 func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Candidate, errs []error) {
 	root := r.Name()
 	done := make([]bool, len(cands))
@@ -48,7 +52,7 @@ func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Ca
 		sem <- struct{}{}
 		wg.Go(func() {
 			defer func() { <-sem }()
-			if !Vet(root, c.Path, t) {
+			if c.fi == nil || !Vet(root, c.Path, t) {
 				return
 			}
 			rel, err := filepath.Rel(root, c.Path)
@@ -56,7 +60,16 @@ func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Ca
 				return
 			}
 			beforeRemove(c.Path)
-			if err := r.RemoveAll(rel); err != nil {
+			parent, err := r.OpenRoot(filepath.Dir(rel))
+			if err != nil {
+				return
+			}
+			defer parent.Close()
+			name := filepath.Base(rel)
+			if fi, err := parent.Lstat(name); err != nil || !fi.IsDir() || !os.SameFile(fi, c.fi) {
+				return
+			}
+			if err := parent.RemoveAll(name); err != nil {
 				failed[i] = err
 				return
 			}
