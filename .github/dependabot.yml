@@ -1,5 +1,6 @@
-# Opens a pull request when a pinned GitHub Action has a new version,
-# updating the commit SHA and its version comment together.
+# Opens a pull request when a pinned GitHub Action or a Go module has a new
+# version. For actions it updates the commit SHA and its version comment
+# together.
 version: 2
 updates:
   - package-ecosystem: github-actions
@@ -8,4 +9,11 @@ updates:
       interval: monthly
     groups:
       actions:
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      go:
         patterns: ["*"]
