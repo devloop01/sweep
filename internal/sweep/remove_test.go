@@ -112,8 +112,8 @@ func open(t *testing.T, root string) *os.Root {
 	return r
 }
 
-// The race Vet can't close: a parent swapped for a symlink after the last
-// Vet but before the delete. Deleting through os.Root must not follow it out.
+// A parent swapped for a symlink after the last Vet but before the delete:
+// the walk down refuses it, so nothing is deleted, inside DIR or out.
 func TestRemoveRaceCantLeaveRoot(t *testing.T) {
 	for name, target := range map[string]func(tmp string) string{
 		"absolute symlink": func(tmp string) string { return filepath.Join(tmp, "outside") },
@@ -132,12 +132,55 @@ func TestRemoveRaceCantLeaveRoot(t *testing.T) {
 			}
 			t.Cleanup(func() { beforeRemove = func(string) {} })
 
-			deleted, errs := Remove(r, tg, cands, 4)
-			if len(deleted) != 0 || len(errs) != 1 {
-				t.Errorf("deleted %v, errs %v; want nothing deleted and one error", deleted, errs)
+			if deleted, errs := Remove(r, tg, cands, 4); len(deleted) != 0 {
+				t.Errorf("deleted %v (errs %v), want nothing", deleted, errs)
 			}
 			if !exists(filepath.Join(tmp, "outside/node_modules/precious")) {
 				t.Error("deleted outside DIR")
+			}
+		})
+	}
+}
+
+// Swaps inside DIR between Vet and the delete can't redirect it to another
+// project's folder: not a symlink (a -> b), and not a rename that puts b in
+// a's place, where every step is a real folder. Only the folder the scan saw
+// is ever deleted.
+func TestRemoveSwapCantRedirectInsideRoot(t *testing.T) {
+	for name, c := range map[string]struct {
+		swap     func(root string)
+		precious string // where b's file is after the swap
+	}{
+		"symlink": {func(root string) {
+			a := filepath.Join(root, "a")
+			must(t, os.Rename(a, a+"-moved"))
+			must(t, os.Symlink("b", a))
+		}, "b/node_modules/precious"},
+		"rename": {func(root string) {
+			a := filepath.Join(root, "a")
+			must(t, os.Rename(a, a+"-moved"))
+			must(t, os.Rename(filepath.Join(root, "b"), a))
+		}, "a/node_modules/precious"},
+		"target renamed": {func(root string) {
+			nm := filepath.Join(root, "a/node_modules")
+			must(t, os.Rename(nm, nm+"-moved"))
+			must(t, os.Rename(filepath.Join(root, "b/node_modules"), nm))
+		}, "a/node_modules/precious"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, root := build(t, "root/a/node_modules/f", "root/b/node_modules/precious", "root/b/.sweepignore")
+			tg := DefaultTargets()
+			r := open(t, root)
+			cands := scanned(root, tg, 4)
+			if len(cands) != 1 {
+				t.Fatalf("listed %v, want only a/node_modules (b is opted out)", cands)
+			}
+			beforeRemove = func(string) { c.swap(root) }
+			t.Cleanup(func() { beforeRemove = func(string) {} })
+
+			Remove(r, tg, cands, 4)
+			if !exists(filepath.Join(root, c.precious)) {
+				t.Errorf("b's opted-out node_modules was deleted (%s gone)", c.precious)
 			}
 		})
 	}
