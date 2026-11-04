@@ -39,13 +39,14 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n
 |---|---|
 | `main.go` | Flags, prompt, output and exit codes |
 | `term.go` | Scan status line, colors, terminal checks |
-| `tui.go` | The interactive screen: list, keys, drawing, confirm dialog |
+| `tui.go` | The interactive screen: list grouped by project, keys, drawing, confirm dialog |
 | `upgrade.go` | `sweep upgrade` and the new-version check |
 | `internal/sweep/targets.conf` | Built-in target lists, embedded in the binary |
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |
 | `internal/sweep/guard.go` | Which folders sweep refuses to run in |
 | `internal/sweep/scan.go` | Walking, matching, sizes, and the re-check before delete (`Vet`) |
 | `internal/sweep/git.go` | Whether a target may hold git-tracked files |
+| `internal/sweep/project.go` | Which project a folder belongs to, for grouping on the screen |
 | `internal/sweep/remove.go` | Deleting the vetted folders through an `os.Root` |
 | `install.sh` | The `curl … \| sh` installer |
 
