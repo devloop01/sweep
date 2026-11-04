@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
@@ -53,9 +54,10 @@ type project struct {
 	kind string // "Turborepo", "Next.js", ...
 }
 
-// group is what the list sorts and groups folders by.
-func (it item) group() string {
-	if it.proj != nil {
+// group is what the list sorts and groups folders by: the project, when
+// the screen shows projects.
+func (s *screen) group(it item) string {
+	if s.tree && it.proj != nil {
 		return "\x00" + it.proj.dir
 	}
 	return it.cand.Path
@@ -89,6 +91,9 @@ type screen struct {
 	moved     bool      // a key was pressed; until then the cursor stays on the top row
 	topSince  time.Time // when the top row last changed while the cursor sat there
 	ask       []string  // folders the confirm dialog asks about; nil when it's closed
+	tree      bool      // folders are listed under their project (t)
+	helping   bool      // the key list (?) is open
+	reveal    string    // a folder to show in Finder (o), for the model to open
 	yes       bool      // the dialog's Delete button has focus (Cancel does at first)
 }
 
@@ -136,22 +141,22 @@ func (s *screen) sort() {
 	}
 	sum, n := map[string]int64{}, map[string]int{}
 	for _, it := range s.items {
-		sum[it.group()] += it.cand.Size
-		n[it.group()]++
+		sum[s.group(it)] += it.cand.Size
+		n[s.group(it)]++
 	}
 	slices.SortStableFunc(s.items, func(a, b item) int {
-		ga, gb := a.group(), b.group()
+		ga, gb := s.group(a), s.group(b)
 		return cmp.Or(cmp.Compare(sum[gb], sum[ga]), strings.Compare(ga, gb),
 			cmp.Compare(b.cand.Size, a.cand.Size), strings.Compare(a.cand.Path, b.cand.Path))
 	})
 	s.rows = s.rows[:0]
 	for i, it := range s.items {
-		g := it.group()
+		g := s.group(it)
 		many := n[g] > 1
-		if many && (i == 0 || s.items[i-1].group() != g) {
+		if many && (i == 0 || s.group(s.items[i-1]) != g) {
 			s.rows = append(s.rows, row{i: i, n: n[g], head: true})
 		}
-		s.rows = append(s.rows, row{i: i, n: 1, child: many, last: many && (i+1 == len(s.items) || s.items[i+1].group() != g)})
+		s.rows = append(s.rows, row{i: i, n: 1, child: many, last: many && (i+1 == len(s.items) || s.group(s.items[i+1]) != g)})
 	}
 	switch {
 	case len(s.rows) == 0:
@@ -189,8 +194,16 @@ func (s *screen) find(path string) int {
 // key applies one key. It returns the folders to delete, if any. The cursor
 // never moves on its own, so a held-down enter deletes one folder.
 func (s *screen) key(k string) (del []sweep.Candidate) {
+	if s.helping {
+		s.helping = false // any key closes the key list
+		return nil
+	}
 	if s.ask != nil && k != "quit" {
 		return s.answer(k)
+	}
+	if k == "help" {
+		s.helping = true
+		return nil
 	}
 	if k == "quit" || k == "esc" {
 		s.quitting, s.ask = true, nil
@@ -231,6 +244,16 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 		all := !slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready && !it.selected })
 		for i := range s.items {
 			s.items[i].selected = !all && s.items[i].state == ready
+		}
+	case "tree":
+		s.tree = !s.tree
+		s.rows[s.cursor].head = false // leaving a project's row: stay on its first folder
+		s.sort()
+	case "open":
+		if r := s.rows[s.cursor]; r.head {
+			s.reveal = s.items[r.i].proj.dir
+		} else {
+			s.reveal = s.items[r.i].cand.Path
 		}
 	case "enter":
 		// Ask first. The dialog keeps the folders' paths, so a re-sort
@@ -465,10 +488,15 @@ func (s *screen) view(l look, w, h int) []string {
 		lines = append(lines, "")
 	}
 	lines = append(lines, " "+s.help(l, w-1))
-	if s.ask == nil {
+	var box string
+	switch {
+	case s.ask != nil:
+		box = s.dialog(l, w)
+	case s.helping:
+		box = keyList(l)
+	default:
 		return lines
 	}
-	box := s.dialog(l, w)
 	bw, bh := lipgloss.Width(box), lipgloss.Height(box)
 	out := lipgloss.NewCompositor(
 		lipgloss.NewLayer(strings.Join(lines, "\n")),
@@ -513,6 +541,29 @@ func (s *screen) dialog(l look, w int) string {
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 3).Render(body)
 }
 
+// keyList is the box ? opens: every key and what it does.
+func keyList(l look) string {
+	var b strings.Builder
+	for i, k := range [][2]string{
+		{"↑ ↓  k j", "move"},
+		{"pgup pgdn", "move a page"},
+		{"g G", "go to the top or bottom"},
+		{"space", "select a folder, or all of a project's"},
+		{"a", "select all, or none"},
+		{"enter", "delete the selected folders, or the highlighted one"},
+		{"t", "group folders by project"},
+		{"o", "show the folder in Finder"},
+		{"q esc", "quit"},
+	} {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(accent).Bold(true).Width(11).Render(k[0]) + k[1])
+	}
+	body := strong.Render("Keys") + "\n\n" + b.String() + "\n\n" + faint.Render("Press any key to close")
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 3).Render(body)
+}
+
 // help is the key bar, showing only keys that do something right now.
 func (s *screen) help(l look, w int) string {
 	hm := help.New()
@@ -550,6 +601,8 @@ func (s *screen) help(l look, w int) string {
 		bind("space", "select", canSelect, "space"),
 		bind("a", "all", slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
 		bind("enter", delDesc, !s.quitting && (nsel > 0 || canSelect), "enter"),
+		bind("t", "projects", len(s.items) > 0, "tree"),
+		bind("?", "help", true, "help"),
 		bind("q", "quit", true, "quit"),
 	})
 }
@@ -633,7 +686,7 @@ var keyNames = map[string]string{
 	"space": "space", "enter": "enter", "a": "all",
 	"q": "quit", "esc": "esc", "ctrl+c": "quit", "ctrl+d": "quit",
 	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "right", "shift+tab": "left",
-	"y": "yes", "n": "no",
+	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help",
 }
 
 // Init asks for the background color. Quitting waits for the answer, so it
@@ -652,6 +705,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		for _, c := range m.s.key(k) {
 			cmds = append(cmds, func() tea.Msg { return m.remove(c) })
+		}
+		if p := m.s.reveal; p != "" {
+			m.s.reveal = ""
+			cmds = append(cmds, func() tea.Msg { exec.Command("open", "-R", p).Run(); return nil })
 		}
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
