@@ -274,7 +274,7 @@ func run(args []string, e env) int {
 	// most of the rows but hardly any of the space. They're still deleted.
 	shown := len(cands)
 	if len(cands) > 20 {
-		shown = slices.IndexFunc(cands, func(c sweep.Candidate) bool { return c.Size < 1<<20 })
+		shown = slices.IndexFunc(cands, func(c sweep.Candidate) bool { return c.Size < 1_000_000 })
 		if shown < 0 {
 			shown = len(cands)
 		}
@@ -370,9 +370,10 @@ func folders(n int) string {
 	return fmt.Sprintf("%d folders", n)
 }
 
-// human formats bytes with base 1024 and one decimal.
+// human formats bytes with one decimal, in the decimal units macOS uses
+// (Finder, Get Info, About This Mac): 1 GB is 1,000,000,000 bytes.
 func human(b int64) string {
-	const k = 1024.0
+	const k = 1000.0
 	switch f := float64(b); {
 	case f >= k*k*k*k:
 		return fmt.Sprintf("%.1f TB", f/(k*k*k*k))
