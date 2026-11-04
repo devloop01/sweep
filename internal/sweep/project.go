@@ -32,6 +32,8 @@ func FindProject(root, dir string) (p Project, ok bool) {
 			switch {
 			case hasFile(d, "package.json"):
 				p, ok = Project{d, framework(d)}, true
+			case hasFile(d, "Cargo.toml") && isTauri(filepath.Dir(d)) && filepath.Base(d) == "src-tauri":
+				// A Tauri app's Rust half: the app is the web project above.
 			case hasFile(d, "Cargo.toml"):
 				p, ok = Project{d, "Rust"}, true
 			case hasFile(d, "pyproject.toml"):
@@ -120,7 +122,16 @@ var frameworks = []struct{ file, kind string }{
 	{"vite.config.", "Vite"},
 }
 
+// isTauri reports whether dir is a Tauri app: a web project with its Rust
+// half in src-tauri.
+func isTauri(dir string) bool {
+	return hasFile(dir, "package.json") && hasFile(filepath.Join(dir, "src-tauri"), "Cargo.toml")
+}
+
 func framework(dir string) string {
+	if isTauri(dir) {
+		return "Tauri"
+	}
 	entries, _ := os.ReadDir(dir)
 	for _, f := range frameworks {
 		for _, e := range entries {
