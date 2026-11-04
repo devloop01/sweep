@@ -49,16 +49,15 @@ type item struct {
 
 // project is the project a folder belongs to: a monorepo, or one app.
 type project struct {
-	dir  string
+	sweep.Project
 	name string // relative to DIR, printable
-	kind string // "Turborepo", "Next.js", ...
 }
 
 // group is what the list sorts and groups folders by: the project, when
 // the screen shows projects.
 func (s *screen) group(it item) string {
 	if s.tree && it.proj != nil {
-		return "\x00" + it.proj.dir
+		return "\x00" + it.proj.Dir
 	}
 	return it.cand.Path
 }
@@ -104,7 +103,7 @@ func (s *screen) add(c sweep.Candidate, path string) { s.addIn(c, path, nil) }
 func (s *screen) addIn(c sweep.Candidate, path string, p *project) {
 	it := item{cand: c, path: path, proj: p}
 	if p != nil {
-		rel, _ := filepath.Rel(p.dir, c.Path)
+		rel, _ := filepath.Rel(p.Dir, c.Path)
 		it.sub = printable(rel)
 	}
 	s.items = append(s.items, it)
@@ -136,7 +135,7 @@ func (s *screen) finish(cands []sweep.Candidate, kept int) {
 // under it. Before that it stays on the top line.
 func (s *screen) sort() {
 	var at string
-	if len(s.rows) > 1 {
+	if len(s.rows) > 0 {
 		at = s.rowID(s.rows[s.cursor])
 	}
 	sum, n := map[string]int64{}, map[string]int{}
@@ -172,7 +171,7 @@ func (s *screen) sort() {
 // rowID names a row so the cursor can find it again after a re-sort.
 func (s *screen) rowID(r row) string {
 	if r.head {
-		return "project:" + s.items[r.i].proj.dir
+		return "project:" + s.items[r.i].proj.Dir
 	}
 	return s.items[r.i].cand.Path
 }
@@ -246,12 +245,14 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 			s.items[i].selected = !all && s.items[i].state == ready
 		}
 	case "tree":
+		// Stay on the same folder; from a project's row, its first one.
+		at := s.items[s.rows[s.cursor].i].cand.Path
 		s.tree = !s.tree
-		s.rows[s.cursor].head = false // leaving a project's row: stay on its first folder
 		s.sort()
+		s.cursor = max(slices.IndexFunc(s.rows, func(r row) bool { return !r.head && s.rowID(r) == at }), 0)
 	case "open":
 		if r := s.rows[s.cursor]; r.head {
-			s.reveal = s.items[r.i].proj.dir
+			s.reveal = s.items[r.i].proj.Dir
 		} else {
 			s.reveal = s.items[r.i].cand.Path
 		}
@@ -313,6 +314,10 @@ func (s *screen) done(path string, err error) {
 	s.items[i].state = deleted
 	s.freed += s.items[i].cand.Size
 }
+
+// quit closes the screen once deletions finish, whatever is open. It's for
+// signals, end of input and an empty scan; the q key goes through key.
+func (s *screen) quit() { s.quitting, s.ask, s.helping = true, nil, false }
 
 // finished reports whether the screen can close: quit was asked for and no
 // deletion is still running.
@@ -440,7 +445,7 @@ func (s *screen) view(l look, w, h int) []string {
 		var cells string
 		switch {
 		case r.head:
-			kind := "  " + it.proj.kind
+			kind := "  " + it.proj.Kind
 			name := fit(it.proj.name, max(room-ansi.StringWidth(kind), 1))
 			kind = ansi.Truncate(kind, room-ansi.StringWidth(name), "")
 			cells = strong.Inherit(row).Render(name) + faint.Inherit(row).Render(kind) +
@@ -511,18 +516,31 @@ func (s *screen) view(l look, w, h int) []string {
 
 // dialog is the confirm box drawn over the list.
 func (s *screen) dialog(l look, w int) string {
-	var size int64
+	asked := map[string]bool{}
 	for _, p := range s.ask {
-		size += s.items[s.find(p)].cand.Size
+		asked[p] = true
+	}
+	var size int64
+	var first *item
+	same := true // all in one project
+	for i := range s.items {
+		it := &s.items[i]
+		if !asked[it.cand.Path] {
+			continue
+		}
+		size += it.cand.Size
+		if first == nil {
+			first = it
+		}
+		same = same && it.proj != nil && first.proj != nil && it.proj.Dir == first.proj.Dir
 	}
 	what := folders(len(s.ask))
-	if p := s.items[s.find(s.ask[0])].proj; p != nil && len(s.ask) > 1 &&
-		!slices.ContainsFunc(s.ask, func(a string) bool { return s.items[s.find(a)].proj != p }) {
-		what += " in " + fit(p.name, min(30, max(w-40, 8)))
-	}
-	if len(s.ask) == 1 {
+	switch {
+	case len(s.ask) == 1:
 		// The box adds about 28 columns around the path.
-		what = fit(s.items[s.find(s.ask[0])].path, min(40, max(w-28, 8)))
+		what = fit(first.path, min(40, max(w-28, 8)))
+	case same:
+		what += " in " + fit(first.proj.name, min(30, max(w-40, 8)))
 	}
 	title := "Delete " + what + " (" + human(size) + ")?"
 	button := func(label string, focus bool) string {
@@ -631,7 +649,7 @@ func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
 		}
 	}
 	if s.skipped > 0 {
-		fmt.Fprintf(e.stdout, "Skipped %s that may hold your files (outside git, or tracked by git).\n", folders(s.skipped))
+		fmt.Fprintln(e.stdout, skipped(s.skipped))
 	}
 	switch {
 	case len(s.items) == 0 && !s.scanning:
@@ -717,7 +735,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case scanDoneMsg:
 		m.s.finish(msg.cands, msg.kept)
 		if len(m.s.items) == 0 {
-			m.s.key("quit") // nothing to clean: close and say so
+			m.s.quit() // nothing to clean: close and say so
 		}
 		if m.e.afterScan != nil {
 			m.e.afterScan()
@@ -725,7 +743,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case result:
 		m.s.done(msg.path, msg.err)
 	case signalMsg:
-		m.s.key("quit")
+		m.s.quit()
 	case tea.BackgroundColorMsg:
 		m.dark, m.answered = msg.IsDark(), true
 	case bgTimeout:
@@ -811,7 +829,7 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 			if name == "." {
 				name = filepath.Base(root)
 			}
-			proj = &project{pr.Dir, printable(name), pr.Kind}
+			proj = &project{pr, printable(name)}
 		}
 		p.Send(foundMsg{c, printable(rel), proj})
 	}
