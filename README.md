@@ -6,14 +6,15 @@ Free up disk space by deleting `node_modules` and build caches (`.next`,
 ```
 $ cd ~/Documents/Code
 $ sweep
- sweep   3 folders · 1.5 GB
+  sweep   3 folders · 1.5 GB
 
-  ◉ agency/web/node_modules       2d ago      1.2 GB
-▌   agency/web/.svelte-kit        today    ✓ deleted
-  ○ site/.vercel/output           3mo ago    12.0 KB
+        Folder                       Touched        Size
+   [✓]  agency/web/node_modules       2d ago      1.2 GB
+ ▌      agency/web/.svelte-kit         today   ✓ deleted
+   [ ]  site/.vercel/output          3mo ago     12.0 KB
 
-Selected 1 folder, 1.2 GB
-↑↓ move • space select • a all • enter delete 1 folder • q quit
+ Selected 1 folder, 1.2 GB
+ ↑↓ move • space select • a all • enter delete 1 folder • q quit
 ```
 
 Everything it deletes comes back with `npm install` / `pnpm install` or your
