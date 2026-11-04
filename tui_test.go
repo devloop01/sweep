@@ -68,8 +68,8 @@ func TestScreenConfirm(t *testing.T) {
 	if s.key("down") != nil || s.cursor != 0 || s.ask == nil {
 		t.Error("other keys should leave the dialog open and the cursor alone")
 	}
-	s.key("right")                                                                                             // Delete
-	s.items = append([]item{{cand: sweep.Candidate{Path: "/r/new", Size: 99 << 20}, path: "new"}}, s.items...) // a re-sort
+	s.key("right")                                                // Delete
+	s.add(sweep.Candidate{Path: "/r/new", Size: 99 << 20}, "new") // a re-sort
 	if del := s.key("enter"); len(del) != 1 || del[0].Path != "/r/p00/node_modules" {
 		t.Fatalf("Delete deleted %v, want the folder it asked about", del)
 	}
@@ -84,7 +84,7 @@ func newScreen(n int) *screen {
 	s := &screen{}
 	for i := range n {
 		path := fmt.Sprintf("p%02d/node_modules", i)
-		s.items = append(s.items, item{cand: sweep.Candidate{Path: "/r/" + path, Size: int64(n-i) << 20}, path: path})
+		s.add(sweep.Candidate{Path: "/r/" + path, Size: int64(n-i) << 20}, path)
 	}
 	return s
 }
@@ -265,6 +265,57 @@ func TestScreenView(t *testing.T) {
 	}
 }
 
+// A project's folders sit under a header row. The header is never a folder:
+// it isn't counted, selected by a, or deleted; space and enter on it act on
+// its folders.
+func TestScreenProjects(t *testing.T) {
+	s := &screen{}
+	mono := &project{"/r/mono", "mono", "Turborepo"}
+	s.addIn(sweep.Candidate{Path: "/r/mono/node_modules", Size: 5}, "mono/node_modules", mono)
+	s.add(sweep.Candidate{Path: "/r/big/node_modules", Size: 8}, "big/node_modules")
+	s.addIn(sweep.Candidate{Path: "/r/mono/apps/web/.next", Size: 4}, "mono/apps/web/.next", mono)
+	// mono's 9 bytes beat big's 8: header, its two folders, then big.
+	if len(s.rows) != 4 || !s.rows[0].head || s.rows[0].n != 2 || !s.rows[2].last || s.items[s.rows[3].i].path != "big/node_modules" {
+		t.Fatalf("rows %+v, items %+v", s.rows, s.items)
+	}
+	if s.items[s.rows[2].i].sub != "apps/web/.next" {
+		t.Errorf("sub path %q", s.items[s.rows[2].i].sub)
+	}
+	if head := escapes.ReplaceAllString(s.view(look{}, 80, 24)[1], ""); !strings.Contains(head, "3 folders") {
+		t.Errorf("header counts project rows: %q", head)
+	}
+	s.key("down") // cursor follows the header across a re-sort
+	s.key("up")
+	s.add(sweep.Candidate{Path: "/r/huge/node_modules", Size: 20}, "huge/node_modules")
+	if !s.rows[s.cursor].head {
+		t.Fatalf("cursor left the project: on row %+v", s.rows[s.cursor])
+	}
+	s.key("space")
+	if !s.items[s.rows[s.cursor+1].i].selected || !s.items[s.rows[s.cursor+2].i].selected {
+		t.Error("space on a project should select its folders")
+	}
+	s.key("space")
+	if slices.ContainsFunc(s.items, func(it item) bool { return it.selected }) {
+		t.Error("space again should unselect them")
+	}
+	s.key("enter")
+	if box := escapes.ReplaceAllString(strings.Join(s.view(look{}, 80, 24), "\n"), ""); !strings.Contains(box, "Delete 2 folders in mono (0.0 KB)?") {
+		t.Errorf("dialog doesn't name the project:\n%s", box)
+	}
+	slices.Sort(s.ask)
+	if !slices.Equal(s.ask, []string{"/r/mono/apps/web/.next", "/r/mono/node_modules"}) {
+		t.Errorf("enter on a project asked about %v", s.ask)
+	}
+	del := s.key("yes")
+	if len(del) != 2 || s.total != 37 {
+		t.Errorf("deleted %v, total %d", del, s.total)
+	}
+	s.key("all")
+	if n := len(slices.DeleteFunc(slices.Clone(s.items), func(it item) bool { return !it.selected })); n != 2 {
+		t.Errorf("a selected %d folders, want the 2 left", n)
+	}
+}
+
 func TestAge(t *testing.T) {
 	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
 	for _, c := range []struct {
@@ -285,6 +336,12 @@ func TestAge(t *testing.T) {
 func keysThen(t *testing.T, input string) (root string, code int, out string) {
 	t.Helper()
 	root = fixture(t)
+	code, out = keysIn(t, root, input)
+	return root, code, out
+}
+
+func keysIn(t *testing.T, root, input string) (code int, out string) {
+	t.Helper()
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { pw.Close() })
 	var o, e bytes.Buffer
@@ -298,7 +355,38 @@ func keysThen(t *testing.T, input string) (root string, code int, out string) {
 		},
 		homes: []string{t.TempDir()}, stdin: pr, stdout: &o, stderr: &e, workers: 4,
 	})
-	return root, code, o.String()
+	return code, o.String()
+}
+
+// A Turborepo's folders are listed under its name; enter there deletes
+// them and nothing else.
+func TestInteractiveDeletesProject(t *testing.T) {
+	root := fixture(t)
+	for path, size := range map[string]int{
+		"mono/turbo.json": 0, "mono/package.json": 2, "mono/node_modules/f": 50_000,
+		"mono/apps/web/package.json": 2, "mono/apps/web/.next/f": 1,
+	} {
+		os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755)
+		os.WriteFile(filepath.Join(root, path), make([]byte, size), 0o644)
+	}
+	code, out := keysIn(t, root, "g\ryq")
+	plain := escapes.ReplaceAllString(out, "")
+	if !strings.Contains(plain, "mono  Turborepo") || !strings.Contains(plain, "└─ apps/web/.next") {
+		t.Errorf("no project row:\n%s", plain)
+	}
+	for _, gone := range []string{"mono/node_modules", "mono/apps/web/.next"} {
+		if _, err := os.Lstat(filepath.Join(root, gone)); err == nil {
+			t.Errorf("%s not deleted", gone)
+		}
+	}
+	for _, kept := range []string{"mono/turbo.json", "mono/apps/web/package.json"} {
+		if _, err := os.Lstat(filepath.Join(root, kept)); err != nil {
+			t.Errorf("%s deleted", kept)
+		}
+	}
+	if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Deleted 2 folders") {
+		t.Errorf("code %d, left %d, out:\n%q", code, targetsLeft(root), out)
+	}
 }
 
 // With nothing to clean the screen closes by itself once the scan ends.
