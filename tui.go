@@ -47,6 +47,15 @@ type item struct {
 	sub      string   // path inside the project, printable
 }
 
+// order is what the list is sorted by; s cycles through them.
+type order int
+
+const (
+	bySize   order = iota // biggest first
+	byRecent              // most recently changed first
+	byName                // A to Z
+)
+
 // project is the project a folder belongs to: a monorepo, or one app.
 type project struct {
 	sweep.Project
@@ -91,6 +100,7 @@ type screen struct {
 	topSince  time.Time       // when the top row last changed while the cursor sat there
 	ask       []string        // folders the confirm dialog asks about; nil when it's closed
 	tree      bool            // folders are listed under their project (t)
+	order     order           // what the list is sorted by (s)
 	folded    map[string]bool // projects collapsed to one row, by folder
 	helping   bool            // the key list (?) is open
 	reveal    string          // a folder to show in Finder (o), for the model to open
@@ -139,15 +149,28 @@ func (s *screen) sort() {
 	if len(s.rows) > 0 {
 		at = s.rowID(s.rows[s.cursor])
 	}
-	sum, n := map[string]int64{}, map[string]int{}
+	// A project sorts by its folders' total size or newest change.
+	sum, newest, n := map[string]int64{}, map[string]time.Time{}, map[string]int{}
 	for _, it := range s.items {
-		sum[s.group(it)] += it.cand.Size
-		n[s.group(it)]++
+		g := s.group(it)
+		sum[g] += it.cand.Size
+		if it.cand.Touched.After(newest[g]) {
+			newest[g] = it.cand.Touched
+		}
+		n[g]++
 	}
 	slices.SortStableFunc(s.items, func(a, b item) int {
 		ga, gb := s.group(a), s.group(b)
-		return cmp.Or(cmp.Compare(sum[gb], sum[ga]), strings.Compare(ga, gb),
-			cmp.Compare(b.cand.Size, a.cand.Size), strings.Compare(a.cand.Path, b.cand.Path))
+		var byGroup, byFolder int
+		switch s.order {
+		case bySize:
+			byGroup, byFolder = cmp.Compare(sum[gb], sum[ga]), cmp.Compare(b.cand.Size, a.cand.Size)
+		case byRecent:
+			byGroup, byFolder = newest[gb].Compare(newest[ga]), b.cand.Touched.Compare(a.cand.Touched)
+		}
+		// Then by name: a project's folder, else the folder itself.
+		return cmp.Or(byGroup, strings.Compare(strings.TrimPrefix(ga, "\x00"), strings.TrimPrefix(gb, "\x00")),
+			byFolder, strings.Compare(a.cand.Path, b.cand.Path))
 	})
 	s.rows = s.rows[:0]
 	for i, it := range s.items {
@@ -294,6 +317,9 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 				break
 			}
 		}
+	case "sort":
+		s.order = (s.order + 1) % 3
+		s.sort()
 	case "tree":
 		// Stay on the same folder; from a project's row, its first one.
 		at := s.items[s.rows[s.cursor].i].cand.Path
@@ -434,11 +460,18 @@ func (s *screen) view(l look, w, h int) []string {
 	}
 	room := max(w-1-7-2-ageW-10-1, 1) // margin, cursor bar and checkbox, gap, age, status column, spare
 	if roomy && len(s.items) > 0 {
-		names := fmt.Sprintf("%-*s  ", room, "Folder")
-		if ageW > 0 {
-			names += fmt.Sprintf("%8s  ", "Touched")
+		// The column the list is sorted by is marked with an arrow.
+		label := func(name string, o order, width int) string {
+			if s.order == o {
+				return lipgloss.NewStyle().Foreground(accent).Bold(true).Render(fmt.Sprintf("%*s", width, name+"↓"))
+			}
+			return faint.Render(fmt.Sprintf("%*s", width, name))
 		}
-		lines = append(lines, clip(faint.Render("        "+names+fmt.Sprintf("%10s", "Size")), w-1))
+		names := "        " + label("Folder", byName, -room) + "  "
+		if ageW > 0 {
+			names += label("Touched", byRecent, 8) + "  "
+		}
+		lines = append(lines, clip(names+label("Size", bySize, 10), w-1))
 	}
 	hl := lipgloss.NewStyle().Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E8E4FA"), lipgloss.Color("#2B2540")))
 	for ri := s.top; ri < min(s.top+s.page, len(s.rows)); ri++ {
@@ -625,6 +658,7 @@ func keyList(l look) string {
 		{"space", "select a folder, or all of a project's"},
 		{"a", "select all, or none"},
 		{"enter", "delete the selected folders, or the highlighted one"},
+		{"s", "sort by size, last change, or name"},
 		{"t", "group folders by project"},
 		{"← → h l", "collapse or open a project"},
 		{"tab ⇧tab", "next or previous project"},
@@ -762,7 +796,7 @@ var keyNames = map[string]string{
 	"pgup": "pgup", "pgdown": "pgdn", "home": "home", "g": "home", "end": "end", "G": "end",
 	"space": "space", "enter": "enter", "a": "all",
 	"q": "quit", "esc": "esc", "ctrl+c": "quit", "ctrl+d": "quit",
-	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "next", "shift+tab": "prev", "c": "fold",
+	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "next", "shift+tab": "prev", "c": "fold", "s": "sort",
 	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help",
 }
 
