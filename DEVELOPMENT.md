@@ -93,11 +93,13 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
   delete to another target-named folder in DIR (see `remove.go`).
 - **Interactive screen** (`tui.go`, when stdin and stdout are terminals and
   neither `-n` nor `-y` is given). It opens at once and the scan fills it in
-  (`Progress.OnFound`). Space selects. Enter opens a confirm dialog for the
-  selection (or the highlighted folder), and each confirmed folder goes
-  through the same `Remove` re-check. The dialog keeps the folders' paths,
-  so a re-sort while it's open can't change what gets deleted, and Cancel
-  has focus first, so a held-down enter never deletes. As the list
+  (`Progress.OnFound`). Space or enter selects (enter on a project's row
+  collapses or opens it, and never deletes). `d` or ⌫ opens a confirm dialog
+  for the selection (or the highlighted folder), and each confirmed folder
+  goes through the same `Remove` re-check. The dialog keeps the folders'
+  paths, so a re-sort while it's open can't change what gets deleted, and
+  Cancel has focus first and other keys are ignored, so a held-down `d`
+  never deletes. As the list
   re-sorts, the cursor and selections stay on their folders, not rows;
   until the first key the cursor stays on the top row. Finished deletions
   are matched by path. Anything typed before the screen opens is discarded.

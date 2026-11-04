@@ -26,8 +26,8 @@ import (
 )
 
 // The interactive screen: it opens at once and fills in while the scan
-// runs. Move with the arrow keys, space selects, enter deletes the selected
-// folders (or the highlighted one), q quits. screen holds the list and its
+// runs. Move with the arrow keys, space or enter selects, d deletes the
+// selected folders (or the highlighted one) after asking, q quits. screen holds the list and its
 // rules; Bubble Tea (model, below) runs it in the terminal.
 
 type state int
@@ -124,7 +124,8 @@ func (s *screen) group(it item) string {
 
 // row is one line of the list: a folder, items[i], or the name of a project
 // with more than one folder, which are items[i:i+n]. Header rows aren't
-// folders and are never deleted; space and enter on one act on its folders.
+// folders and are never deleted: space and d on one act on its folders,
+// enter collapses or opens it.
 type row struct {
 	i, n        int
 	head        bool
@@ -274,8 +275,8 @@ func (s *screen) find(path string) int {
 	return slices.IndexFunc(s.items, func(it item) bool { return it.cand.Path == path })
 }
 
-// key applies one key. It returns the folders to delete, if any. The cursor
-// never moves on its own, so a held-down enter deletes one folder.
+// key applies one key. It returns the folders to delete, if any; only
+// answering the confirm dialog does. The cursor never moves on its own.
 func (s *screen) key(k string) (del []sweep.Candidate) {
 	if s.helping {
 		s.helping = false // any key closes the key list
@@ -317,11 +318,7 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 	case "end":
 		s.cursor = last
 	case "space":
-		// On a project, select all its folders, or unselect them if they all are.
-		all := !slices.ContainsFunc(s.under(), func(i int) bool { return s.items[i].state == ready && !s.items[i].selected })
-		for _, i := range s.under() {
-			s.items[i].selected = !all && s.items[i].state == ready
-		}
+		s.toggle()
 	case "all":
 		// Select every folder still there, or unselect all if they all are.
 		all := !slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready && !it.selected })
@@ -350,17 +347,11 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 					s.folded[s.items[r.i].proj.Dir] = !all
 				}
 			}
-		case dir == "":
-			return nil
-		default:
+			s.refold(dir)
+		case dir != "":
 			s.folded[dir] = k == "left"
+			s.refold(dir)
 		}
-		at := s.rowID(s.rows[s.cursor])
-		if dir != "" && s.folded[dir] {
-			at = "project:" + dir
-		}
-		s.sort()
-		s.cursor = max(slices.IndexFunc(s.rows, func(r row) bool { return s.rowID(r) == at }), 0)
 	case "next", "prev":
 		// Jump to the next project's row, or back to the previous one (from
 		// a folder inside a project, back to its row).
@@ -393,12 +384,10 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 		// Acts on the row: a project collapses or opens, a folder is
 		// selected like with space. It never deletes.
 		if r := s.rows[s.cursor]; r.head {
-			if s.folded[s.items[r.i].proj.Dir] {
-				return s.key("right")
-			}
-			return s.key("left")
+			s.toggleFold(s.items[r.i].proj.Dir)
+		} else {
+			s.toggle()
 		}
-		return s.key("space")
 	case "delete":
 		// Ask first. The dialog keeps the folders' paths, so a re-sort
 		// while it's open can't change what gets deleted.
@@ -418,7 +407,8 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 }
 
 // answer applies a key while the confirm dialog is open. Cancel has focus
-// first, so a held-down enter opens the dialog and then closes it.
+// first and other keys are ignored, so a held-down d leaves it open and
+// deletes nothing.
 func (s *screen) answer(k string) (del []sweep.Candidate) {
 	switch k {
 	case "left", "right", "next", "prev":
@@ -497,21 +487,51 @@ func (s *screen) click(x, y int) (del []sweep.Candidate) {
 	s.cursor, s.moved = ri, true
 	switch r := s.rows[ri]; {
 	case r.head && x >= 8 && x < 10: // ▾ ▸
-		if s.folded[s.items[r.i].proj.Dir] {
-			return s.key("right")
-		}
-		return s.key("left")
+		s.toggleFold(s.items[r.i].proj.Dir)
+		return nil
 	case r.child && x >= 11 && x < 14, !r.child && x >= 3 && x < 6: // [ ]
-		return s.key("space")
+		s.toggle()
+		return nil
 	}
 	// A second click on the same row soon after selects it, like space.
 	id, now := s.rowID(s.rows[ri]), time.Now()
 	if s.lastClick.row == id && now.Sub(s.lastClick.at) < 400*time.Millisecond {
 		s.lastClick.row = "" // a third click starts over
-		return s.key("space")
+		s.toggle()
+		return nil
 	}
 	s.lastClick.row, s.lastClick.at = id, now
 	return nil
+}
+
+// toggle selects the cursor row's folders (one, or a project's), or
+// unselects them if they all are.
+func (s *screen) toggle() {
+	all := !slices.ContainsFunc(s.under(), func(i int) bool { return s.items[i].state == ready && !s.items[i].selected })
+	for _, i := range s.under() {
+		s.items[i].selected = !all && s.items[i].state == ready
+	}
+}
+
+// toggleFold collapses the project at dir, or opens it if it's collapsed.
+func (s *screen) toggleFold(dir string) {
+	if s.folded == nil {
+		s.folded = map[string]bool{}
+	}
+	s.folded[dir] = !s.folded[dir]
+	s.refold(dir)
+}
+
+// refold rebuilds the rows after projects were collapsed or opened. The
+// cursor stays on its row, or moves up to the row of dir's project if that
+// just collapsed under it.
+func (s *screen) refold(dir string) {
+	at := s.rowID(s.rows[s.cursor])
+	if dir != "" && s.folded[dir] {
+		at = "project:" + dir
+	}
+	s.sort()
+	s.cursor = max(slices.IndexFunc(s.rows, func(r row) bool { return s.rowID(r) == at }), 0)
 }
 
 // quit closes the screen once deletions finish, whatever is open. It's for
