@@ -61,8 +61,10 @@ highlighted folder. sweep asks first: `y` deletes, `n` or esc cancels.
 
 Press `t` to list folders under their project, a whole monorepo (Turborepo,
 Nx, pnpm or npm workspaces) as one project. Space or enter on a project's
-name acts on all its folders. `o` shows a folder in Finder, `?` lists every
-key, and `q` quits.
+name acts on all its folders, ←/→ collapse and open one, tab jumps to the
+next, and `c` collapses or opens them all.
+
+`o` shows a folder in Finder, `?` lists every key, and `q` quits.
 
 To just look, or to clean everything at once:
 

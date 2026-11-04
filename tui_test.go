@@ -31,7 +31,7 @@ func TestKeyNames(t *testing.T) {
 		{Code: tea.KeySpace, Text: " "}: "space", {Code: tea.KeyEnter}: "enter",
 		{Code: 'a', Text: "a"}: "all", {Code: 'q', Text: "q"}: "quit",
 		{Code: tea.KeyEscape}: "esc", {Code: 'c', Mod: tea.ModCtrl}: "quit", {Code: 'd', Mod: tea.ModCtrl}: "quit",
-		{Code: tea.KeyLeft}: "left", {Code: tea.KeyRight}: "right", {Code: tea.KeyTab}: "right",
+		{Code: tea.KeyLeft}: "left", {Code: tea.KeyRight}: "right", {Code: tea.KeyTab}: "next", {Code: 'c', Text: "c"}: "fold",
 		{Code: 'y', Text: "y"}: "yes", {Code: 'n', Text: "n"}: "no",
 		{Code: 'x', Text: "x"}: "", // other keys do nothing
 	} {
@@ -319,6 +319,55 @@ func TestScreenProjects(t *testing.T) {
 	s.key("tree")
 	if len(s.rows) != len(s.items) || s.items[s.rows[s.cursor].i].path != "mono/node_modules" {
 		t.Errorf("after t: %d rows, cursor on %q", len(s.rows), s.items[s.rows[s.cursor].i].path)
+	}
+}
+
+// In the project view ← collapses the cursor's project (from a folder in it,
+// the cursor goes up to its row), → opens it, tab and shift+tab hop between
+// projects, and c collapses or opens them all.
+func TestScreenFold(t *testing.T) {
+	s := &screen{tree: true}
+	proj := func(dir string) *project { return &project{sweep.Project{Dir: "/r/" + dir, Kind: "Node"}, dir} }
+	for _, f := range []struct {
+		dir, sub string
+		size     int64
+	}{{"a", "node_modules", 9}, {"a", ".next", 8}, {"b", "node_modules", 5}, {"b", ".turbo", 4}} {
+		s.addIn(sweep.Candidate{Path: "/r/" + f.dir + "/" + f.sub, Size: f.size}, f.dir+"/"+f.sub, proj(f.dir))
+	}
+	on := func() string {
+		r := s.rows[s.cursor]
+		if r.head {
+			return s.items[r.i].proj.name
+		}
+		return s.items[r.i].path
+	}
+	if s.key("next"); on() != "b" {
+		t.Fatalf("tab went to %q, want b", on())
+	}
+	s.key("down") // b/node_modules
+	if s.key("left"); on() != "b" || len(s.rows) != 4 {
+		t.Fatalf("← from a folder: on %q, %d rows", on(), len(s.rows))
+	}
+	if s.key("prev"); on() != "a" {
+		t.Fatalf("shift+tab went to %q, want a", on())
+	}
+	if s.key("right"); len(s.rows) != 4 || on() != "a" {
+		t.Errorf("→ on an open project changed something: %d rows on %q", len(s.rows), on())
+	}
+	s.key("fold")
+	if len(s.rows) != 2 || on() != "a" {
+		t.Fatalf("c: %d rows, on %q", len(s.rows), on())
+	}
+	s.key("space") // still selects a collapsed project's folders
+	if !s.items[0].selected || !s.items[1].selected {
+		t.Error("space on a collapsed project should select its folders")
+	}
+	if s.key("fold"); len(s.rows) != 6 {
+		t.Errorf("c again should open all: %d rows", len(s.rows))
+	}
+	s.key("enter")
+	if s.key("next"); !s.yes {
+		t.Error("tab in the dialog should move to Delete")
 	}
 }
 
