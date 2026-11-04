@@ -53,7 +53,7 @@ func ignored(ctx context.Context, dir string) bool {
 	if err != nil {
 		return false // 1: not ignored; anything else: can't tell
 	}
-	f := strings.Split(string(out), "\x00") // source, line, pattern, path
+	f := strings.Split(string(out), "\x00")         // source, line, pattern, path
 	if len(f) < 4 || strings.HasPrefix(f[2], "!") { // git already exits 1 for a ! match; belt and braces
 		return false
 	}

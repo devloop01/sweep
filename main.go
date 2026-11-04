@@ -35,9 +35,9 @@ Usage:
 
 In a terminal, sweep opens a list that fills in as it scans, biggest first:
   ↑/↓ or j/k    move (g/G: top/bottom)
-  space         select or unselect a folder
+  space/enter   select or unselect a folder (enter on a project: collapse/open)
   a             select or unselect all
-  enter         delete the selected folders, or the highlighted one
+  d or ⌫        delete the selected folders, or the highlighted one
   y / n         confirm or cancel a delete
   s             sort by size, name, or last change
   t             group folders by project

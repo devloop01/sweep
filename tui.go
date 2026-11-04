@@ -298,7 +298,7 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 		s.moved = true
 		// The top row just changed: this key may have been meant for the
 		// folder that was there. It only stops the cursor following the top.
-		if (k == "space" || k == "enter") && time.Since(s.topSince) < 500*time.Millisecond {
+		if (k == "space" || k == "enter" || k == "delete") && time.Since(s.topSince) < 500*time.Millisecond {
 			return nil
 		}
 	}
@@ -390,6 +390,16 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 			s.reveal = s.items[r.i].cand.Path
 		}
 	case "enter":
+		// Acts on the row: a project collapses or opens, a folder is
+		// selected like with space. It never deletes.
+		if r := s.rows[s.cursor]; r.head {
+			if s.folded[s.items[r.i].proj.Dir] {
+				return s.key("right")
+			}
+			return s.key("left")
+		}
+		return s.key("space")
+	case "delete":
 		// Ask first. The dialog keeps the folders' paths, so a re-sort
 		// while it's open can't change what gets deleted.
 		if s.quitting {
@@ -793,7 +803,8 @@ func keyList(l look) string {
 		{"g G", "go to the top or bottom"},
 		{"space", "select a folder, or all of a project's"},
 		{"a", "select all, or none"},
-		{"enter", "delete the selected folders, or the highlighted one"},
+		{"enter", "select a folder, or collapse or open a project"},
+		{"d ⌫", "delete the selected folders, or the highlighted one"},
 		{"s", "sort by size, name, or last change"},
 		{"t", "group folders by project"},
 		{"← → h l", "collapse or open a project"},
@@ -849,7 +860,7 @@ func (s *screen) help(l look, w int) string {
 		// The project view shows c in a's place; there's room for one.
 		bind("a", "all", !s.tree && slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
 		bind("c", "fold all", s.tree && slices.ContainsFunc(s.rows, func(r row) bool { return r.head }), "fold"),
-		bind("enter", delDesc, !s.quitting && (nsel > 0 || canSelect), "enter"),
+		bind("d", delDesc, !s.quitting && (nsel > 0 || canSelect), "delete"),
 		bind("t", "projects", len(s.items) > 0, "tree"),
 		bind("?", "help", true, "help"),
 		bind("q", "quit", true, "quit"),
@@ -939,7 +950,7 @@ type bgTimeout struct{}
 var keyNames = map[string]string{
 	"up": "up", "k": "up", "down": "down", "j": "down",
 	"pgup": "pgup", "pgdown": "pgdn", "home": "home", "g": "home", "end": "end", "G": "end",
-	"space": "space", "enter": "enter", "a": "all",
+	"space": "space", "enter": "enter", "a": "all", "d": "delete", "backspace": "delete", "delete": "delete",
 	"q": "quit", "esc": "esc", "ctrl+c": "quit", "ctrl+d": "quit",
 	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "next", "shift+tab": "prev", "c": "fold", "s": "sort",
 	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help",

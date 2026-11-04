@@ -138,7 +138,7 @@ func snapshot(t *testing.T, dirs ...string) map[string]string {
 func TestRandomUseDeletesOnlyWhatWasPicked(t *testing.T) {
 	keys := []string{"up", "down", "down", "pgdn", "home", "end", "space", "space", "all",
 		"tree", "sort", "fold", "left", "right", "next", "prev", "help",
-		"enter", "enter", "yes", "yes", "no", "left", "right", "click", "click", "click"}
+		"enter", "delete", "delete", "enter", "yes", "yes", "no", "left", "right", "click", "click", "click"}
 	total := 0
 	defer func() {
 		if total < 100 {
@@ -193,10 +193,10 @@ func TestRandomUseDeletesOnlyWhatWasPicked(t *testing.T) {
 				} else {
 					del = s.key(k)
 				}
-				if k == "enter" && asked == nil && s.ask != nil {
+				if k == "delete" && asked == nil && s.ask != nil {
 					got, want := slices.Sorted(slices.Values(s.ask)), slices.Sorted(slices.Values(picked))
 					if !slices.Equal(got, want) {
-						t.Fatalf("enter asked about %q, but the user picked %q", got, want)
+						t.Fatalf("d asked about %q, but the user picked %q", got, want)
 					}
 				}
 				for _, c := range del {
