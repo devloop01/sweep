@@ -3,7 +3,10 @@ package sweep
 import (
 	"os"
 	"path/filepath"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestFindProject(t *testing.T) {
@@ -66,4 +69,54 @@ func TestFindProject(t *testing.T) {
 			t.Errorf("%s: got %q %q, want %q %q", c.dir, got, p.Kind, c.want, c.kind)
 		}
 	}
+}
+
+// A project file that's a pipe, or a symlink to one (a tarball can carry
+// either), is skipped, not opened: opening a pipe waits for a writer, which
+// would hang the scan.
+func TestFindProjectSkipsPipes(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"fifo", "linked"} {
+		os.MkdirAll(filepath.Join(root, dir, "node_modules"), 0o755)
+	}
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo/package.json"), 0o644); err != nil {
+		t.Skip("mkfifo:", err)
+	}
+	os.Symlink("../fifo/package.json", filepath.Join(root, "linked/package.json"))
+	os.Symlink("../fifo/package.json", filepath.Join(root, "linked/Cargo.toml"))
+
+	done := make(chan bool)
+	go func() {
+		FindProject(root, filepath.Join(root, "fifo"))
+		FindProject(root, filepath.Join(root, "linked"))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("FindProject hung on a pipe")
+	}
+}
+
+// One Finder answers like FindProject, from many goroutines at once.
+func TestFinderMatchesFindProject(t *testing.T) {
+	root := t.TempDir()
+	for _, p := range []string{"mono/turbo.json", "mono/apps/web/package.json", "solo/package.json"} {
+		os.MkdirAll(filepath.Dir(filepath.Join(root, p)), 0o755)
+		os.WriteFile(filepath.Join(root, p), []byte("{}"), 0o644)
+	}
+	var f Finder
+	var wg sync.WaitGroup
+	for range 8 {
+		for _, d := range []string{"mono/apps/web", "mono", "solo", "."} {
+			wg.Go(func() {
+				got, gok := f.Find(root, filepath.Join(root, d))
+				want, wok := FindProject(root, filepath.Join(root, d))
+				if got != want || gok != wok {
+					t.Errorf("%s: Finder %v %v, FindProject %v %v", d, got, gok, want, wok)
+				}
+			})
+		}
+	}
+	wg.Wait()
 }

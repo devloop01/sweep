@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 // Project is a folder that holds a project: Dir, and Kind, the tool or
@@ -18,32 +20,65 @@ type Project struct {
 // root: the outermost monorepo above it, or else the nearest folder with a
 // package.json, Cargo.toml or pyproject.toml. Folders outside any project
 // return false.
-func FindProject(root, dir string) (p Project, ok bool) {
+func FindProject(root, dir string) (Project, bool) { return new(Finder).Find(root, dir) }
+
+// Finder is FindProject that remembers what each folder is, so a scan that
+// finds many folders in one monorepo reads its files once. The zero value is
+// ready to use, from many goroutines at once.
+type Finder struct {
+	mu   sync.Mutex
+	dirs map[string]kinds
+}
+
+// kinds is what a folder is: a monorepo, a project, or neither ("").
+type kinds struct{ mono, project string }
+
+// Find is FindProject.
+func (f *Finder) Find(root, dir string) (p Project, ok bool) {
 	for d := dir; ; d = filepath.Dir(d) {
 		rel, err := filepath.Rel(root, d)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return p, ok
 		}
-		// Only a few names are checked on the way up; the folder is read
-		// once, for its framework, when it's the project.
-		if kind := monorepo(d); kind != "" {
-			p, ok = Project{d, kind}, true // keep looking: the outermost one wins
-		} else if !ok {
-			switch {
-			case hasFile(d, "package.json"):
-				p, ok = Project{d, framework(d)}, true
-			case hasFile(d, "Cargo.toml") && isTauri(filepath.Dir(d)) && filepath.Base(d) == "src-tauri":
-				// A Tauri app's Rust half: the app is the web project above.
-			case hasFile(d, "Cargo.toml"):
-				p, ok = Project{d, "Rust"}, true
-			case hasFile(d, "pyproject.toml"):
-				p, ok = Project{d, "Python"}, true
-			}
+		if k := f.kinds(d); k.mono != "" {
+			p, ok = Project{d, k.mono}, true // keep looking: the outermost one wins
+		} else if !ok && k.project != "" {
+			p, ok = Project{d, k.project}, true
 		}
 		if d == root || d == filepath.Dir(d) {
 			return p, ok
 		}
 	}
+}
+
+func (f *Finder) kinds(d string) kinds {
+	f.mu.Lock()
+	k, seen := f.dirs[d]
+	f.mu.Unlock()
+	if seen {
+		return k
+	}
+	// Only a few names are checked; the folder is read, for its framework,
+	// only when it's a project.
+	if k.mono = monorepo(d); k.mono == "" {
+		switch {
+		case hasFile(d, "package.json"):
+			k.project = framework(d)
+		case hasFile(d, "Cargo.toml") && isTauri(filepath.Dir(d)) && filepath.Base(d) == "src-tauri":
+			// A Tauri app's Rust half: the app is the web project above.
+		case hasFile(d, "Cargo.toml"):
+			k.project = "Rust"
+		case hasFile(d, "pyproject.toml"):
+			k.project = "Python"
+		}
+	}
+	f.mu.Lock()
+	if f.dirs == nil {
+		f.dirs = map[string]kinds{}
+	}
+	f.dirs[d] = k
+	f.mu.Unlock()
+	return k
 }
 
 func hasFile(dir, name string) bool {
@@ -69,14 +104,25 @@ func monorepo(dir string) string {
 	return ""
 }
 
-// cargoWorkspace reports whether a Cargo.toml has a [workspace] table.
-func cargoWorkspace(path string) bool {
-	f, err := os.Open(path)
+// readSmall reads up to 1 MB of path, if it's a regular file. It doesn't
+// follow a symlink or wait on a pipe or device: a project file in the tree
+// being scanned can't hang the scan.
+func readSmall(path string) ([]byte, bool) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return false
+		return nil, false
 	}
 	defer f.Close()
-	b, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+	if fi, err := f.Stat(); err != nil || !fi.Mode().IsRegular() {
+		return nil, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
+	return b, err == nil
+}
+
+// cargoWorkspace reports whether a Cargo.toml has a [workspace] table.
+func cargoWorkspace(path string) bool {
+	b, _ := readSmall(path)
 	for line := range strings.Lines(string(b)) {
 		if strings.TrimSpace(line) == "[workspace]" {
 			return true
@@ -88,15 +134,14 @@ func cargoWorkspace(path string) bool {
 // hasWorkspaces reports whether a package.json lists workspaces (npm, Yarn,
 // Bun): ["apps/*"] or {"packages": ["apps/*"]}. An empty list doesn't count.
 func hasWorkspaces(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
+	b, ok := readSmall(path)
+	if !ok {
 		return false
 	}
-	defer f.Close()
 	var pkg struct {
 		Workspaces json.RawMessage `json:"workspaces"`
 	}
-	if json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&pkg) != nil || pkg.Workspaces == nil {
+	if json.Unmarshal(b, &pkg) != nil || pkg.Workspaces == nil {
 		return false
 	}
 	var list []string

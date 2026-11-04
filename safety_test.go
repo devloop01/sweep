@@ -160,9 +160,10 @@ func TestRandomUseDeletesOnlyWhatWasPicked(t *testing.T) {
 			defer r.Close()
 
 			s := &screen{}
+			var finder sweep.Finder
 			for _, c := range cands {
 				rel, _ := filepath.Rel(root, c.Path)
-				s.addIn(c, printable(rel), projectOf(root, c.Path))
+				s.addIn(c, printable(rel), projectOf(&finder, root, c.Path))
 			}
 			s.finish(cands, len(kept))
 			var deleted []string
