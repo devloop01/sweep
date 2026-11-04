@@ -6,7 +6,7 @@ Free up disk space by deleting `node_modules` and build caches (`.next`,
 ```
 $ cd ~/Documents/Code
 $ sweep
-  sweep   3 folders · 1.5 GB
+  sweep   3 folders · 1.5 GB · 38.2 GB free
 
         Folder                       Touched       Size↓
    [✓]  agency/node_modules           2d ago      1.2 GB

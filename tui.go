@@ -116,6 +116,7 @@ type screen struct {
 	helping   bool            // the key list (?) is open
 	reveal    string          // a folder to show in Finder (o), for the model to open
 	drawn     layout          // where the last frame put things, for clicks
+	free      int64           // free space on DIR's disk, 0 if unknown
 	yes       bool            // the dialog's Delete button has focus (Cancel does at first)
 }
 
@@ -498,6 +499,9 @@ func (s *screen) view(l look, w, h int) []string {
 	if s.scanning {
 		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %d checked, %d found", s.checked, len(s.items)))
 	}
+	if s.free > 0 {
+		head += faint.Render(" · " + human(s.free) + " free")
+	}
 	// A one-column margin, and in a tall enough terminal a blank line on top
 	// and the column names.
 	roomy := h >= 12
@@ -863,6 +867,7 @@ type model struct {
 	w, h     int
 	progress *sweep.Progress
 	remove   func(sweep.Candidate) result
+	root     string // DIR
 	spin     spinner.Model
 	spinning bool // a spinner tick is pending
 	dark     bool // the terminal's background, once it has said
@@ -932,6 +937,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case result:
 		m.s.done(msg.path, msg.err)
+		m.s.free = diskFree(m.root)
 	case signalMsg:
 		m.s.quit()
 	case tea.BackgroundColorMsg:
@@ -973,7 +979,8 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	}
 	w, h := e.size()
 	sem := make(chan struct{}, max(e.workers, 1)) // deletions at once
-	m := &model{s: s, e: e, w: w, h: h, dark: true, progress: &sweep.Progress{}, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent))), remove: func(c sweep.Candidate) result {
+	s.free = diskFree(root)
+	m := &model{s: s, e: e, root: root, w: w, h: h, dark: true, progress: &sweep.Progress{}, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent))), remove: func(c sweep.Candidate) result {
 		sem <- struct{}{}
 		defer func() { <-sem }()
 		deleted, errs := sweep.Remove(r, t, []sweep.Candidate{c}, 1)
@@ -1035,6 +1042,16 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 		sem <- struct{}{}
 	}
 	return err
+}
+
+// diskFree is the space left for files on dir's disk, or 0 if it can't
+// tell. On APFS, space held by local Time Machine snapshots comes back later.
+func diskFree(dir string) int64 {
+	var st syscall.Statfs_t
+	if syscall.Statfs(dir, &st) != nil {
+		return 0
+	}
+	return int64(st.Bavail) * int64(st.Bsize)
 }
 
 // quitOnEOF calls quit when reading fails, EOF included. It waits first:
