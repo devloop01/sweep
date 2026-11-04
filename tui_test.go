@@ -249,6 +249,9 @@ func TestScreenView(t *testing.T) {
 	if head := escapes.ReplaceAllString(s.view(look{}, 80, 24)[1], ""); !strings.Contains(head, "· 38.0 GB free") {
 		t.Errorf("header: %q", head)
 	}
+	if head := escapes.ReplaceAllString(s.view(look{}, 40, 24)[1], ""); strings.Contains(head, "free") {
+		t.Errorf("free space cut to fit 40 columns: %q", head)
+	}
 	s.free = 0
 	if help := escapes.ReplaceAllString(s.view(look{}, 80, 24)[23], ""); !strings.Contains(help, "space select") || !strings.Contains(help, "q quit") {
 		t.Errorf("help bar: %q", help)
@@ -519,6 +522,16 @@ func TestScreenCursorFollowsOnlyFolder(t *testing.T) {
 	s.add(sweep.Candidate{Path: "/r/b", Size: 9}, "b")
 	if got := s.items[s.rows[s.cursor].i].path; got != "a" {
 		t.Errorf("cursor on %q, want a", got)
+	}
+}
+
+// diskFree reads a real disk: more than nothing, less than 1 PB.
+func TestDiskFree(t *testing.T) {
+	if f := diskFree(t.TempDir()); f <= 1 || f > 1<<50 {
+		t.Errorf("diskFree = %d", f)
+	}
+	if f := diskFree("/no/such/dir"); f != 0 {
+		t.Errorf("diskFree of a missing folder = %d, want 0", f)
 	}
 }
 
