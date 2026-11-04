@@ -110,22 +110,24 @@ func TestDryRun(t *testing.T) {
 		t.Fatalf("code %d, left %d", code, targetsLeft(root))
 	}
 	// Sizes depend on the filesystem's block size, so match on shape: paths
-	// left, sizes right-aligned in one column, the total under them.
+	// left, then when each changed, then sizes right-aligned, and the total
+	// with the disk's free space under them.
 	want := regexp.MustCompile(`^Scanning ` + regexp.QuoteMeta(root) + ` \.\.\.
-a/node_modules +\d+\.\d KB
-c/\.svelte-kit +\d+\.\d KB
-e/weird\?name/node_modules +\d+\.\d KB
--{37}
-3 folders +\d+\.\d KB
+a/node_modules +today +\d+\.\d KB
+c/\.svelte-kit +today +\d+\.\d KB
+e/weird\?name/node_modules +today +\d+\.\d KB
+-+
+3 folders · \d+\.\d [KMGT]B free +\d+\.\d KB
 Dry run: nothing deleted\.
 $`)
 	if !want.MatchString(out) {
 		t.Errorf("out:\n%s", out)
 	}
-	// The longest path is 25 runes; every row is path column + 2 + 10.
-	for _, l := range strings.Split(out, "\n")[1:6] {
-		if utf8.RuneCountInString(l) != 37 {
-			t.Errorf("row not 37 wide: %q", l)
+	// Every row lines up: path column + 2 + 8 for the age + 2 + 10.
+	lines := strings.Split(out, "\n")[1:6]
+	for _, l := range lines {
+		if n, w := utf8.RuneCountInString(l), utf8.RuneCountInString(lines[0]); n != w || n < 25+22 {
+			t.Errorf("row %d wide, want %d (and at least 47): %q", n, w, l)
 		}
 	}
 }
@@ -388,7 +390,7 @@ func TestSmallFoldersFoldInLongLists(t *testing.T) {
 
 	code, out, _ := sweepIn(t, "", false, "-y", root)
 	if code != 0 || !strings.Contains(out, "big/node_modules") || strings.Contains(out, "p00/.turbo") ||
-		!strings.Contains(out, "+ 22 small folders (under 1 MB each)") || !strings.Contains(out, "23 folders  ") ||
+		!strings.Contains(out, "+ 22 small folders (under 1 MB each)") || !strings.Contains(out, "23 folders · ") ||
 		!strings.Contains(out, "Deleted 23 folders") {
 		t.Errorf("code %d, out:\n%s", code, out)
 	}

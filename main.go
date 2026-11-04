@@ -268,9 +268,10 @@ func run(args []string, e env) int {
 		skipped()
 		return 0
 	}
-	// Paths on the left, sizes right-aligned in one column after the longest
-	// path, kept within the terminal. A longer path isn't cut (it's a list of
-	// what gets deleted); it just pushes its own size along.
+	// Paths on the left, then when it fits how long ago each folder changed,
+	// then sizes, right-aligned in columns after the longest path and kept
+	// within the terminal. A longer path isn't cut (it's a list of what gets
+	// deleted); it just pushes its own columns along.
 	//
 	// In a long list, folders under 1 MB are folded into one line: they're
 	// most of the rows but hardly any of the space. They're still deleted.
@@ -283,17 +284,25 @@ func run(args []string, e env) int {
 	}
 	paths := make([]string, shown)
 	var total, folded int64
+	var foldedTouched time.Time
 	for i, c := range cands {
 		total += c.Size
 		if i >= shown {
 			folded += c.Size
+			if c.Touched.After(foldedTouched) {
+				foldedTouched = c.Touched
+			}
 			continue
 		}
 		rel, _ := filepath.Rel(root, c.Path)
 		paths[i] = printable(rel)
 	}
 	foldLabel := "+ " + strings.Replace(folders(len(cands)-shown), "folder", "small folder", 1) + " (under 1 MB each)"
-	col := len(folders(len(cands)))
+	totalLabel := folders(len(cands))
+	if free := diskFree(root); free > 0 {
+		totalLabel += " · " + human(free) + " free"
+	}
+	col := utf8.RuneCountInString(totalLabel)
 	for _, l := range paths {
 		col = max(col, utf8.RuneCountInString(l))
 	}
@@ -304,19 +313,28 @@ func run(args []string, e env) int {
 	if width == 0 {
 		width = 80
 	}
-	col = max(min(col, width-13), 1) // 2 spaces + 10 for the size + 1 spare
-	row := func(label, labelStyle string, size int64, style string) {
+	ageW := 0 // "3mo ago" plus its gap, only where there's room for it
+	if width >= 50 {
+		ageW = 10
+	}
+	col = max(min(col, width-13-ageW), 1) // 2 spaces + 10 for the size + 1 spare
+	now := time.Now()
+	row := func(label, labelStyle string, touched time.Time, size int64, style string) {
 		pad := strings.Repeat(" ", max(col-utf8.RuneCountInString(label), 0))
-		fmt.Fprintf(e.stdout, "%s%s  %s\n", e.paint(labelStyle, label), pad, e.paint(style, fmt.Sprintf("%10s", human(size))))
+		ages := ""
+		if ageW > 0 {
+			ages = e.paint(dim, fmt.Sprintf("  %8s", age(touched, now)))
+		}
+		fmt.Fprintf(e.stdout, "%s%s%s  %s\n", e.paint(labelStyle, label), pad, ages, e.paint(style, fmt.Sprintf("%10s", human(size))))
 	}
 	for i, p := range paths {
-		row(p, "", cands[i].Size, sizeStyle(cands[i].Size))
+		row(p, "", cands[i].Touched, cands[i].Size, sizeStyle(cands[i].Size))
 	}
 	if shown < len(cands) {
-		row(foldLabel, dim, folded, dim)
+		row(foldLabel, dim, foldedTouched, folded, dim)
 	}
-	fmt.Fprintln(e.stdout, strings.Repeat("-", col+12))
-	row(folders(len(cands)), bold, total, bold)
+	fmt.Fprintln(e.stdout, strings.Repeat("-", col+12+ageW))
+	row(totalLabel, bold, time.Time{}, total, bold)
 	skipped()
 
 	if dryRun {
