@@ -79,7 +79,7 @@ func TestRemoveRevetsSymlinkedParent(t *testing.T) {
 func TestRemoveRefusesOutsideRoot(t *testing.T) {
 	tmp, root := build(t, "outside/node_modules/precious", "root/x/")
 	out := filepath.Join(tmp, "outside/node_modules")
-	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{{Path: out}, {Path: root}}, 4)
+	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{At(out), At(root)}, 4)
 	if len(deleted) != 0 || !exists(out) || !exists(root) {
 		t.Errorf("deleted %v", deleted)
 	}
