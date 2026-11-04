@@ -27,6 +27,10 @@ func TestFindProject(t *testing.T) {
 		"code/rs/cli/Cargo.toml":             "[package]\nname = \"cli\"\n",
 		"code/tool/Cargo.toml":               "[package]\n# [workspace] in a comment doesn't count\n",
 		"code/py/pyproject.toml":             ``,
+		"code/desk/package.json":             `{}`,
+		"code/desk/vite.config.ts":           ``,
+		"code/desk/src-tauri/Cargo.toml":     "[package]\nname = \"desk\"\n",
+		"code/rsonly/src-tauri/Cargo.toml":   "[package]\n", // no web project above: plain Rust
 	} {
 		p := filepath.Join(top, path)
 		os.MkdirAll(filepath.Dir(p), 0o755)
@@ -47,6 +51,9 @@ func TestFindProject(t *testing.T) {
 		{"rs/cli", "rs", "Cargo workspace"},
 		{"tool", "tool", "Rust"},
 		{"py", "py", "Python"},
+		{"desk", "desk", "Tauri"},
+		{"desk/src-tauri", "desk", "Tauri"}, // target lives here: same project as node_modules
+		{"rsonly/src-tauri", "rsonly/src-tauri", "Rust"},
 		{"loose", "", ""},
 		{".", "", ""},
 	} {
