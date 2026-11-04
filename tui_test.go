@@ -602,7 +602,7 @@ func keysIn(t *testing.T, root, input string, state ...string) (code int, out st
 	t.Cleanup(func() { pw.Close() })
 	var o, e bytes.Buffer
 	code = run([]string{root}, env{
-		isTTY: true, cols: 80, size: func() (int, int) { return 80, 24 },
+		isTTY: true, cols: 80, size: func() (int, int) { return 80, 24 }, replyWait: time.Millisecond,
 		afterScan: func() {
 			go func() {
 				pw.Write([]byte(input))
@@ -675,7 +675,7 @@ func TestInteractiveNothingToClean(t *testing.T) {
 	t.Cleanup(func() { pw.Close() })
 	var o, e bytes.Buffer
 	code := run([]string{root}, env{
-		isTTY: true, cols: 80, size: func() (int, int) { return 80, 24 },
+		isTTY: true, cols: 80, size: func() (int, int) { return 80, 24 }, replyWait: time.Millisecond,
 		homes: []string{t.TempDir()}, stdin: pr, stdout: &o, stderr: &e, workers: 4,
 	})
 	if code != 0 || !strings.HasSuffix(o.String(), "Nothing to clean.\n") {

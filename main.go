@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 	"unicode/utf8"
 	"unsafe"
@@ -77,6 +78,7 @@ type env struct {
 	cols           int                     // stdout's width; 0 when it isn't a terminal
 	size           func() (cols, rows int) // terminal size for the interactive screen
 	afterScan      func()                  // tests: called when the interactive scan ends
+	replyWait      time.Duration           // tests: how long quitting waits for the terminal's color reply; 0 means a second
 	live           bool                    // stderr is a terminal: show scan progress
 	flushInput     func()                  // discards type-ahead before the prompt; nil in tests
 	stdout, stderr io.Writer
