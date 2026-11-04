@@ -1079,15 +1079,7 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	// Send returns at once after the screen has closed.
 	m.progress.OnFound = func(c sweep.Candidate) {
 		rel, _ := filepath.Rel(root, c.Path)
-		var proj *project
-		if pr, ok := sweep.FindProject(root, filepath.Dir(c.Path)); ok {
-			name, _ := filepath.Rel(root, pr.Dir)
-			if name == "." {
-				name = filepath.Base(root)
-			}
-			proj = &project{pr, printable(name)}
-		}
-		p.Send(foundMsg{c, printable(rel), proj})
+		p.Send(foundMsg{c, printable(rel), projectOf(root, c.Path)})
 	}
 	go func() {
 		cands, kept := sweep.Scan(root, t, e.workers, m.progress)
@@ -1100,6 +1092,19 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 		sem <- struct{}{}
 	}
 	return err
+}
+
+// projectOf is the project the folder at path belongs to, or nil.
+func projectOf(root, path string) *project {
+	pr, ok := sweep.FindProject(root, filepath.Dir(path))
+	if !ok {
+		return nil
+	}
+	name, _ := filepath.Rel(root, pr.Dir)
+	if name == "." {
+		name = filepath.Base(root)
+	}
+	return &project{pr, printable(name)}
 }
 
 // diskFree is the space left for files on dir's disk, or 0 if it can't
