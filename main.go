@@ -45,6 +45,7 @@ In a terminal, sweep opens a list that fills in as it scans, biggest first:
   o             show the folder in Finder
   ?             list all keys
   q             quit
+  The mouse works too: scroll, click rows, checkboxes and column names.
 
 Flags:
   -n, --dry-run   print the list, delete nothing

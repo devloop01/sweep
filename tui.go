@@ -47,6 +47,16 @@ type item struct {
 	sub      string   // path inside the project, printable
 }
 
+// layout is where view drew what clicks can hit, by line and column.
+type layout struct {
+	head     int       // line of the column names, -1 if none
+	cols     [3][2]int // columns of Folder, Touched, Size: [from, to)
+	list     int       // line of the first list row
+	shown    []string  // rowID of each list row drawn, top to bottom
+	buttons  int       // line of the dialog's buttons, -1 if none
+	del, can [2]int    // columns of Delete and Cancel: [from, to)
+}
+
 // order is what the list is sorted by. s cycles through them in the
 // columns' order, left to right: Folder, Touched, then back to Size.
 type order int
@@ -105,6 +115,7 @@ type screen struct {
 	folded    map[string]bool // projects collapsed to one row, by folder
 	helping   bool            // the key list (?) is open
 	reveal    string          // a folder to show in Finder (o), for the model to open
+	drawn     layout          // where the last frame put things, for clicks
 	yes       bool            // the dialog's Delete button has focus (Cancel does at first)
 }
 
@@ -392,6 +403,55 @@ func (s *screen) done(path string, err error) {
 	s.freed += s.items[i].cand.Size
 }
 
+// click applies a left click at column x, line y of the last frame: it
+// presses a dialog button, sorts by a column, or moves the cursor to a row
+// and ticks its checkbox or folds its project if that was hit. A row is
+// found by what was drawn there, so a re-sort since can't change the folder.
+func (s *screen) click(x, y int) (del []sweep.Candidate) {
+	in := func(r [2]int) bool { return x >= r[0] && x < r[1] }
+	d := s.drawn
+	switch {
+	case s.helping:
+		s.helping = false
+		return nil
+	case s.ask != nil:
+		if y == d.buttons && in(d.del) {
+			s.yes = true
+			return s.answer("enter")
+		}
+		if y == d.buttons && in(d.can) {
+			return s.answer("no")
+		}
+		return nil
+	case y == d.head:
+		for i, o := range []order{byName, byRecent, bySize} {
+			if in(d.cols[i]) && s.order != o {
+				s.order, s.moved = o, true
+				s.sort()
+			}
+		}
+		return nil
+	}
+	if y < d.list || y >= d.list+len(d.shown) {
+		return nil
+	}
+	ri := slices.IndexFunc(s.rows, func(r row) bool { return s.rowID(r) == d.shown[y-d.list] })
+	if ri < 0 {
+		return nil
+	}
+	s.cursor, s.moved = ri, true
+	switch r := s.rows[ri]; {
+	case r.head && x >= 8 && x < 10: // ▾ ▸
+		if s.folded[s.items[r.i].proj.Dir] {
+			return s.key("right")
+		}
+		return s.key("left")
+	case r.child && x >= 11 && x < 14, !r.child && x >= 3 && x < 6: // [ ]
+		return s.key("space")
+	}
+	return nil
+}
+
 // quit closes the screen once deletions finish, whatever is open. It's for
 // signals, end of input and an empty scan; the q key goes through key.
 func (s *screen) quit() { s.quitting, s.ask, s.helping = true, nil, false }
@@ -460,7 +520,10 @@ func (s *screen) view(l look, w, h int) []string {
 		ageW = 10
 	}
 	room := max(w-1-7-2-ageW-10-1, 1) // margin, cursor bar and checkbox, gap, age, status column, spare
+	s.drawn = layout{head: -1, buttons: -1}
 	if roomy && len(s.items) > 0 {
+		s.drawn.head = len(lines)
+		s.drawn.cols = [3][2]int{{8, 8 + room}, {8 + room + 2, 8 + room + 2 + ageW - 2}, {8 + room + ageW, 8 + room + ageW + 10}}
 		// The column the list is sorted by is marked with an arrow.
 		label := func(name string, o order, width int) string {
 			if s.order == o {
@@ -475,8 +538,10 @@ func (s *screen) view(l look, w, h int) []string {
 		lines = append(lines, clip(names+label("Size", bySize, 10), w-1))
 	}
 	hl := lipgloss.NewStyle().Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E8E4FA"), lipgloss.Color("#2B2540")))
+	s.drawn.list = len(lines)
 	for ri := s.top; ri < min(s.top+s.page, len(s.rows)); ri++ {
 		r := s.rows[ri]
+		s.drawn.shown = append(s.drawn.shown, s.rowID(r))
 		it := s.items[r.i]
 		row := lipgloss.NewStyle()
 		bar, pathStyle := " ", lipgloss.NewStyle()
@@ -593,13 +658,27 @@ func (s *screen) view(l look, w, h int) []string {
 		return lines
 	}
 	bw, bh := lipgloss.Width(box), lipgloss.Height(box)
+	by := max((h-bh)/2, 0)
 	out := lipgloss.NewCompositor(
 		lipgloss.NewLayer(strings.Join(lines, "\n")),
-		lipgloss.NewLayer(box).X(max((w-bw)/2, 0)).Y(max((h-bh)/2, 0)).Z(1),
+		lipgloss.NewLayer(box).X(max((w-bw)/2, 0)).Y(by).Z(1),
 	).Render()
 	lines = strings.Split(out, "\n")
 	for i := range lines {
 		lines[i] = clip(lines[i], w-1)
+	}
+	// The buttons sit above the box's bottom padding and border.
+	if y := by + bh - 3; s.ask != nil && y < min(len(lines), h) {
+		plain := ansi.Strip(lines[y])
+		find := func(label string) [2]int {
+			i := strings.LastIndex(plain, label)
+			if i < 0 {
+				return [2]int{}
+			}
+			x := ansi.StringWidth(plain[:i])
+			return [2]int{x - 2, x + len(label) + 2} // with the button's padding
+		}
+		s.drawn.buttons, s.drawn.del, s.drawn.can = y, find("Delete"), find("Cancel")
 	}
 	return lines[:min(len(lines), max(h, 1))]
 }
@@ -822,6 +901,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.s.reveal = ""
 			cmds = append(cmds, func() tea.Msg { exec.Command("open", "-R", p).Run(); return nil })
 		}
+	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft {
+			for _, c := range m.s.click(msg.X, msg.Y) {
+				cmds = append(cmds, func() tea.Msg { return m.remove(c) })
+			}
+		}
+	case tea.MouseWheelMsg:
+		if m.s.ask == nil && !m.s.helping {
+			switch msg.Button {
+			case tea.MouseWheelUp:
+				m.s.key("up")
+			case tea.MouseWheelDown:
+				m.s.key("down")
+			}
+		}
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 	case foundMsg:
@@ -865,6 +959,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) View() tea.View {
 	v := tea.NewView(strings.Join(m.s.view(look{m.dark, m.spin.View()}, m.w, m.h), "\n"))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }
 
