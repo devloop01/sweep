@@ -14,7 +14,7 @@ $ sweep
    [ ]  site/.vercel/output          3mo ago     12.0 KB
 
  Selected 1 folder, 1.2 GB
- ↑↓ move • space select • a all • enter delete 1 folder • t projects • ? help • q quit
+ space select • a all • enter delete (1) • t projects • ? help • q quit
 ```
 
 Everything it deletes comes back with `npm install` / `pnpm install` or your

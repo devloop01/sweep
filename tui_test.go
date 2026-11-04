@@ -462,6 +462,15 @@ func TestScreenClick(t *testing.T) {
 	if p.click(8, p.drawn.list); len(p.rows) != 1 {
 		t.Errorf("click on ▾: %d rows", len(p.rows))
 	}
+	// The key bar fits 80 columns, with c in the project view and a selection.
+	p.items[0].selected, p.items[1].selected = true, true
+	for _, tree := range []bool{true, false} {
+		p.tree = tree
+		bar := escapes.ReplaceAllString(p.view(look{}, 80, 24)[23], "")
+		if !strings.Contains(bar, "q quit") || strings.Contains(bar, "c fold all") != tree || strings.Contains(bar, "a all") == tree {
+			t.Errorf("key bar (projects %v): %q", tree, bar)
+		}
+	}
 }
 
 // ? opens the key list; the next key only closes it. o asks to show the
