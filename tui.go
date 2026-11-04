@@ -976,10 +976,12 @@ var keyNames = map[string]string{
 	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help",
 }
 
-// Init asks for the background color. Quitting waits for the answer, so it
-// can't arrive after the terminal is restored and land in the shell.
+// Init asks for the background color. Quitting waits for the answer (up to
+// a second, for a slow SSH link; only if it hasn't come yet), so it can't
+// arrive after the terminal is restored and land in the shell.
 func (m *model) Init() tea.Cmd {
-	return tea.Batch(tea.RequestBackgroundColor, tea.Tick(300*time.Millisecond, func(time.Time) tea.Msg { return bgTimeout{} }))
+	wait := cmp.Or(m.e.replyWait, time.Second)
+	return tea.Batch(tea.RequestBackgroundColor, tea.Tick(wait, func(time.Time) tea.Msg { return bgTimeout{} }))
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1117,6 +1119,9 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 		p.Send(scanDoneMsg{cands, len(kept)})
 	}()
 	_, err := p.Run()
+	if e.flushInput != nil {
+		e.flushInput() // a terminal reply that came in late, so it's not typed at the prompt
+	}
 	// Run can end with an error while deletions run; let them finish. Taking
 	// every slot also stops queued ones from starting.
 	for range cap(sem) {
