@@ -483,7 +483,11 @@ type model struct {
 	spin     spinner.Model
 	spinning bool // a spinner tick is pending
 	dark     bool // the terminal's background, once it has said
+	answered bool // the background query was answered or timed out
 }
+
+// bgTimeout stops waiting for a terminal that never answers the query.
+type bgTimeout struct{}
 
 // keyNames maps Bubble Tea's key names to the screen's.
 var keyNames = map[string]string{
@@ -495,7 +499,11 @@ var keyNames = map[string]string{
 	"y": "yes", "n": "no",
 }
 
-func (m *model) Init() tea.Cmd { return tea.RequestBackgroundColor }
+// Init asks for the background color. Quitting waits for the answer, so it
+// can't arrive after the terminal is restored and land in the shell.
+func (m *model) Init() tea.Cmd {
+	return tea.Batch(tea.RequestBackgroundColor, tea.Tick(300*time.Millisecond, func(time.Time) tea.Msg { return bgTimeout{} }))
+}
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
@@ -525,7 +533,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case signalMsg:
 		m.s.key("quit")
 	case tea.BackgroundColorMsg:
-		m.dark = msg.IsDark()
+		m.dark, m.answered = msg.IsDark(), true
+	case bgTimeout:
+		m.answered = true
 	case spinner.TickMsg:
 		// The spinner runs while something is going on; each tick also
 		// redraws the scan's folder count.
@@ -540,7 +550,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds, m.spinning = append(cmds, m.spin.Tick), true
 	}
 	m.s.checked = m.progress.Dirs()
-	if m.s.finished() {
+	if m.s.finished() && m.answered {
 		return m, tea.Quit
 	}
 	return m, tea.Batch(cmds...)
