@@ -785,17 +785,19 @@ func (s *screen) help(l look, w int) string {
 	}
 	delDesc := "delete"
 	if nsel > 0 {
-		delDesc = "delete " + folders(nsel)
+		delDesc = fmt.Sprintf("delete (%d)", nsel)
 	}
-	return hm.ShortHelpView([]key.Binding{
-		bind("↑↓", "move", len(s.rows) > 1, "up", "down"),
+	// Kept to fit 80 columns; moving and the rest are in the ? list.
+	return clip(hm.ShortHelpView([]key.Binding{
 		bind("space", "select", canSelect, "space"),
-		bind("a", "all", slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
+		// The project view shows c in a's place; there's room for one.
+		bind("a", "all", !s.tree && slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
+		bind("c", "fold all", s.tree && slices.ContainsFunc(s.rows, func(r row) bool { return r.head }), "fold"),
 		bind("enter", delDesc, !s.quitting && (nsel > 0 || canSelect), "enter"),
 		bind("t", "projects", len(s.items) > 0, "tree"),
 		bind("?", "help", true, "help"),
 		bind("q", "quit", true, "quit"),
-	})
+	}), w-1)
 }
 
 type result struct {
