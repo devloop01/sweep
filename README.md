@@ -64,8 +64,9 @@ Nx, pnpm or npm workspaces) as one project. Space or enter on a project's
 name acts on all its folders, ←/→ collapse and open one, tab jumps to the
 next, and `c` collapses or opens them all.
 
-`s` sorts by size, name, or last change. `o` shows a folder in Finder, `?`
-lists every key, and `q` quits.
+`s` sorts by size, name, or last change. sweep remembers the project view
+and sort order for next time. `o` shows a folder in Finder, `?` lists every
+key, and `q` quits.
 
 The mouse works too: scroll, click a row or its checkbox (or double-click
 the row) to select it, click ▾ to fold a project, a column name to sort by
@@ -148,8 +149,8 @@ shown, because pnpm keeps a shared copy of every package.
 
 - **Upgrade:** `sweep upgrade`, or run the install command again. sweep tells
   you when a new release is out.
-- **Uninstall:** `rm "$(which sweep)"`. sweep is a single file and leaves
-  nothing else behind.
+- **Uninstall:** `rm "$(which sweep)"`, and `rm -r ~/.local/state/sweep`
+  where it remembers the screen's view.
 
 ---
 

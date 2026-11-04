@@ -67,6 +67,7 @@ To sweep a folder named upgrade, run sweep ./upgrade.
 // env is everything run needs from the outside world, so tests can fake it.
 type env struct {
 	configPath     string // user's targets.conf; "" for built-in lists only
+	statePath      string // where the screen remembers its view; "" to not remember
 	asRoot         bool
 	homes          []string // every path naming the home folder
 	system         []string // refused system roots
@@ -115,7 +116,7 @@ func main() {
 		cols = termWidth(os.Stdout)
 	}
 	code := run(os.Args[1:], env{
-		configPath: configPath(), cols: cols,
+		configPath: configPath(), statePath: statePath(), cols: cols,
 		size:   func() (int, int) { return termSize(os.Stdout) },
 		asRoot: os.Geteuid() == 0, homes: sweep.Homes(), system: sweep.SystemRoots,
 		stdin: os.Stdin, isTTY: isTerminal(os.Stdin), flushInput: flushTypeahead,
@@ -143,6 +144,19 @@ func configPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".config", "sweep", "targets.conf")
+}
+
+// statePath is $XDG_STATE_HOME/sweep/screen.json, or
+// ~/.local/state/sweep/screen.json when that isn't set.
+func statePath() string {
+	if dir := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(dir) {
+		return filepath.Join(dir, "sweep", "screen.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "state", "sweep", "screen.json")
 }
 
 // flushTypeahead discards anything typed while scanning, so a "y" and
