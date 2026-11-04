@@ -532,7 +532,7 @@ func TestDialogButtonsIgnoreListText(t *testing.T) {
 		path := fmt.Sprintf("p%02d/%s/Delete Later/node_modules", i, strings.Repeat("x", 90))
 		s.add(sweep.Candidate{Path: "/r/" + path, Size: int64(30-i) << 20}, path)
 	}
-	s.moved = true // past the guard for a key right after the list changed
+	s.moved = true                                        // past the guard for a key right after the list changed
 	s.items[0].selected, s.items[1].selected = true, true // a short title, so a narrow box
 	s.key("delete")
 	plain := ansi.Strip(s.view(look{}, 160, 24)[s.drawn.buttons])

@@ -1113,9 +1113,10 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 
 	// The scan runs in the background; each folder shows up when measured.
 	// Send returns at once after the screen has closed.
+	var finder sweep.Finder // one per scan, so each folder's files are read once
 	m.progress.OnFound = func(c sweep.Candidate) {
 		rel, _ := filepath.Rel(root, c.Path)
-		p.Send(foundMsg{c, printable(rel), projectOf(root, c.Path)})
+		p.Send(foundMsg{c, printable(rel), projectOf(&finder, root, c.Path)})
 	}
 	go func() {
 		cands, kept := sweep.Scan(root, t, e.workers, m.progress)
@@ -1134,8 +1135,8 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 }
 
 // projectOf is the project the folder at path belongs to, or nil.
-func projectOf(root, path string) *project {
-	pr, ok := sweep.FindProject(root, filepath.Dir(path))
+func projectOf(f *sweep.Finder, root, path string) *project {
+	pr, ok := f.Find(root, filepath.Dir(path))
 	if !ok {
 		return nil
 	}
