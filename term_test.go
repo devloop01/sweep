@@ -30,8 +30,9 @@ func TestStatusFitsWidth(t *testing.T) {
 
 func TestSizeStyle(t *testing.T) {
 	for b, want := range map[int64]string{
-		2 << 30: red + bold, 1 << 30: red + bold, 300 << 20: yellow, 100 << 20: yellow,
-		50 << 20: "", 1 << 20: "", 512 << 10: dim, 0: dim,
+		// Decimal thresholds, like the sizes printed next to the colors.
+		2_000_000_000: red + bold, 1_000_000_000: red + bold, 999_999_999: yellow, 100_000_000: yellow,
+		99_999_999: "", 1_000_000: "", 999_999: dim, 0: dim,
 	} {
 		if got := sizeStyle(b); got != want {
 			t.Errorf("sizeStyle(%d) = %q, want %q", b, got, want)

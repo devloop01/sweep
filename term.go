@@ -95,11 +95,11 @@ func (e env) paint(style, s string) string {
 // sizeStyle colors a size so the big folders stand out.
 func sizeStyle(b int64) string {
 	switch {
-	case b >= 1<<30:
+	case b >= 1_000_000_000: // decimal, like human()
 		return red + bold
-	case b >= 100<<20:
+	case b >= 100_000_000:
 		return yellow
-	case b < 1<<20:
+	case b < 1_000_000:
 		return dim
 	}
 	return ""

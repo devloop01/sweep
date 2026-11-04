@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/devloop01/sweep/internal/sweep"
 )
 
@@ -483,6 +484,11 @@ func TestScreenClick(t *testing.T) {
 	if s.click(s.drawn.cols[1][0]+1, s.drawn.head); s.order != byRecent {
 		t.Errorf("click on Touched: order %d", s.order)
 	}
+	// The Size zone is where "Size" is drawn: clicking its last letter sorts.
+	head := ansi.Strip(s.view(look{}, 80, 24)[s.drawn.head])
+	if x := ansi.StringWidth(head[:strings.Index(head, "Size")]) + 3; s.click(x, s.drawn.head) == nil && s.order != bySize {
+		t.Errorf("click on the e of Size at %d: order %d (zone %v)", x, s.order, s.drawn.cols[2])
+	}
 
 	s.key("delete")
 	s.view(look{}, 80, 24)
@@ -515,6 +521,40 @@ func TestScreenClick(t *testing.T) {
 		if !strings.Contains(bar, "q quit") || strings.Contains(bar, "c fold all") != tree || strings.Contains(bar, "a all") == tree {
 			t.Errorf("key bar (projects %v): %q", tree, bar)
 		}
+	}
+}
+
+// The dialog's buttons are found in the dialog, not the screen line: a path
+// beside the box that says "Delete" isn't a button.
+func TestDialogButtonsIgnoreListText(t *testing.T) {
+	s := &screen{}
+	for i := range 30 {
+		path := fmt.Sprintf("p%02d/%s/Delete Later/node_modules", i, strings.Repeat("x", 90))
+		s.add(sweep.Candidate{Path: "/r/" + path, Size: int64(30-i) << 20}, path)
+	}
+	s.moved = true // past the guard for a key right after the list changed
+	s.items[0].selected, s.items[1].selected = true, true // a short title, so a narrow box
+	s.key("delete")
+	plain := ansi.Strip(s.view(look{}, 160, 24)[s.drawn.buttons])
+	text := ansi.StringWidth(plain[:strings.LastIndex(plain, "Delete")])
+	if s.drawn.del[1] > text {
+		t.Fatalf("the list's Delete at %d isn't right of the button %v:\n%s", text, s.drawn.del, plain)
+	}
+	if del := s.click(text+1, s.drawn.buttons); del != nil || s.ask == nil {
+		t.Fatalf("a click on list text deleted %v", del)
+	}
+	if del := s.click(s.drawn.del[0]+1, s.drawn.buttons); len(del) != 2 {
+		t.Errorf("the Delete button deleted %v", del)
+	}
+}
+
+// Any key closes the key list, as it says, even one sweep doesn't use.
+func TestHelpClosesOnAnyKey(t *testing.T) {
+	m := &model{s: newScreen(2), progress: &sweep.Progress{}}
+	m.s.key("help")
+	m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if m.s.helping {
+		t.Error("x didn't close the key list")
 	}
 }
 
