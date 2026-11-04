@@ -583,7 +583,7 @@ func keysThen(t *testing.T, input string) (root string, code int, out string) {
 	return root, code, out
 }
 
-func keysIn(t *testing.T, root, input string) (code int, out string) {
+func keysIn(t *testing.T, root, input string, state ...string) (code int, out string) {
 	t.Helper()
 	pr, pw := io.Pipe()
 	t.Cleanup(func() { pw.Close() })
@@ -597,8 +597,31 @@ func keysIn(t *testing.T, root, input string) (code int, out string) {
 			}()
 		},
 		homes: []string{t.TempDir()}, stdin: pr, stdout: &o, stderr: &e, workers: 4,
+		statePath: strings.Join(state, ""),
 	})
 	return code, o.String()
+}
+
+// The project view and sort order are remembered for the next run; a run
+// that changes neither writes nothing.
+func TestInteractiveRemembersView(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "sweep", "screen.json")
+	keysIn(t, fixture(t), "q", state)
+	if _, err := os.Stat(state); err == nil {
+		t.Fatal("a run that changed nothing wrote the state file")
+	}
+	keysIn(t, fixture(t), "tsq", state) // project view, sort by name
+	if b, _ := os.ReadFile(state); string(b) != `{"projects":true,"sort":"name"}`+"\n" {
+		t.Fatalf("state file: %q", b)
+	}
+	_, out := keysIn(t, fixture(t), "q", state)
+	if !strings.Contains(escapes.ReplaceAllString(out, ""), "Folder↓") {
+		t.Error("next run didn't open sorted by name")
+	}
+	os.WriteFile(state, []byte("not json"), 0o644)
+	if _, out = keysIn(t, fixture(t), "q", state); !strings.Contains(escapes.ReplaceAllString(out, ""), "Size↓") {
+		t.Error("a broken state file should mean the defaults")
+	}
 }
 
 // A Turborepo's folders are listed under its name; enter there deletes

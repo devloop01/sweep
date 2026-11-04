@@ -4,6 +4,7 @@ package main
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -55,6 +56,45 @@ type layout struct {
 	shown    []string  // rowID of each list row drawn, top to bottom
 	buttons  int       // line of the dialog's buttons, -1 if none
 	del, can [2]int    // columns of Delete and Cancel: [from, to)
+}
+
+// savedView is what the screen remembers between runs: the project view and the
+// sort order. The cursor and folded projects depend on what's on disk, so
+// they start fresh.
+type savedView struct {
+	Projects bool   `json:"projects"`
+	Sort     string `json:"sort"`
+}
+
+var orderNames = []string{bySize: "size", byName: "name", byRecent: "recent"}
+
+func viewOf(s *screen) savedView { return savedView{s.tree, orderNames[s.order]} }
+
+// loadView applies the view saved at path, if any, and returns it. A missing
+// or broken file means the defaults.
+func loadView(path string, s *screen) savedView {
+	if path == "" {
+		return viewOf(s)
+	}
+	var v savedView
+	if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &v) == nil {
+		s.tree = v.Projects
+		if i := slices.Index(orderNames, v.Sort); i >= 0 {
+			s.order = order(i)
+		}
+	}
+	return viewOf(s)
+}
+
+// saveView writes v to path. Failing only means it's not remembered.
+func saveView(path string, v savedView) {
+	if path == "" {
+		return
+	}
+	b, _ := json.Marshal(v)
+	if os.MkdirAll(filepath.Dir(path), 0o755) == nil {
+		os.WriteFile(path, append(b, '\n'), 0o644)
+	}
 }
 
 // order is what the list is sorted by. s cycles through them in the
@@ -826,6 +866,12 @@ type result struct {
 // until they quit, then prints what was deleted. It returns the exit code.
 func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
 	s := &screen{scanning: true}
+	before := loadView(e.statePath, s)
+	defer func() {
+		if v := viewOf(s); v != before {
+			saveView(e.statePath, v)
+		}
+	}()
 	if err := runScreen(e, s, r, t, root); err != nil {
 		fmt.Fprintln(e.stderr, "sweep:", err)
 		return 1
