@@ -42,12 +42,39 @@ type item struct {
 	path     string // relative to DIR, printable
 	state    state
 	selected bool
+	proj     *project // nil outside any project
+	sub      string   // path inside the project, printable
+}
+
+// project is the project a folder belongs to: a monorepo, or one app.
+type project struct {
+	dir  string
+	name string // relative to DIR, printable
+	kind string // "Turborepo", "Next.js", ...
+}
+
+// group is what the list sorts and groups folders by.
+func (it item) group() string {
+	if it.proj != nil {
+		return "\x00" + it.proj.dir
+	}
+	return it.cand.Path
+}
+
+// row is one line of the list: a folder, items[i], or the name of a project
+// with more than one folder, which are items[i:i+n]. Header rows aren't
+// folders and are never deleted; space and enter on one act on its folders.
+type row struct {
+	i, n        int
+	head        bool
+	child, last bool // the folder is listed under its project's name
 }
 
 // screen is the interactive list, separate from the terminal so it can be
 // tested with plain key names.
 type screen struct {
-	items     []item
+	items     []item // folders, in list order
+	rows      []row  // the list as shown, with project names; cursor and top index it
 	total     int64
 	freed     int64
 	skipped   int
@@ -66,8 +93,16 @@ type screen struct {
 }
 
 // add puts a folder the scan just found into the list, biggest first.
-func (s *screen) add(c sweep.Candidate, path string) {
-	s.items = append(s.items, item{cand: c, path: path})
+func (s *screen) add(c sweep.Candidate, path string) { s.addIn(c, path, nil) }
+
+// addIn adds a folder that belongs to project p, listed under its name.
+func (s *screen) addIn(c sweep.Candidate, path string, p *project) {
+	it := item{cand: c, path: path, proj: p}
+	if p != nil {
+		rel, _ := filepath.Rel(p.dir, c.Path)
+		it.sub = printable(rel)
+	}
+	s.items = append(s.items, it)
 	s.total += c.Size
 	s.sort()
 }
@@ -90,26 +125,61 @@ func (s *screen) finish(cands []sweep.Candidate, kept int) {
 	s.scanning, s.skipped = false, kept
 }
 
-// sort orders the list biggest first. Once a key has been pressed the
-// cursor stays on the same folder, not the same row, so space never deletes
-// a folder that just slid under it. Before that it stays on the top row.
+// sort orders the list biggest first, each project's folders together
+// under its name. Once a key has been pressed the cursor stays on the same
+// row, not the same line, so space never deletes a folder that just slid
+// under it. Before that it stays on the top line.
 func (s *screen) sort() {
 	var at string
-	if len(s.items) > 1 {
-		at = s.items[s.cursor].cand.Path
+	if len(s.rows) > 1 {
+		at = s.rowID(s.rows[s.cursor])
+	}
+	sum, n := map[string]int64{}, map[string]int{}
+	for _, it := range s.items {
+		sum[it.group()] += it.cand.Size
+		n[it.group()]++
 	}
 	slices.SortStableFunc(s.items, func(a, b item) int {
-		return cmp.Or(cmp.Compare(b.cand.Size, a.cand.Size), strings.Compare(a.cand.Path, b.cand.Path))
+		ga, gb := a.group(), b.group()
+		return cmp.Or(cmp.Compare(sum[gb], sum[ga]), strings.Compare(ga, gb),
+			cmp.Compare(b.cand.Size, a.cand.Size), strings.Compare(a.cand.Path, b.cand.Path))
 	})
+	s.rows = s.rows[:0]
+	for i, it := range s.items {
+		g := it.group()
+		many := n[g] > 1
+		if many && (i == 0 || s.items[i-1].group() != g) {
+			s.rows = append(s.rows, row{i: i, n: n[g], head: true})
+		}
+		s.rows = append(s.rows, row{i: i, n: 1, child: many, last: many && (i+1 == len(s.items) || s.items[i+1].group() != g)})
+	}
 	switch {
-	case len(s.items) == 0:
+	case len(s.rows) == 0:
 	case !s.moved:
-		if s.items[0].cand.Path != at {
+		if s.rowID(s.rows[0]) != at {
 			s.topSince = time.Now()
 		}
 	case at != "":
-		s.cursor = s.find(at)
+		s.cursor = max(slices.IndexFunc(s.rows, func(r row) bool { return s.rowID(r) == at }), 0)
 	}
+}
+
+// rowID names a row so the cursor can find it again after a re-sort.
+func (s *screen) rowID(r row) string {
+	if r.head {
+		return "project:" + s.items[r.i].proj.dir
+	}
+	return s.items[r.i].cand.Path
+}
+
+// under is the folders on the cursor's row: one, or a project's.
+func (s *screen) under() []int {
+	r := s.rows[s.cursor]
+	var is []int
+	for i := r.i; i < r.i+r.n; i++ {
+		is = append(is, i)
+	}
+	return is
 }
 
 func (s *screen) find(path string) int {
@@ -136,7 +206,7 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 			return nil
 		}
 	}
-	last := len(s.items) - 1
+	last := len(s.rows) - 1
 	switch k {
 	case "up":
 		s.cursor = max(s.cursor-1, 0)
@@ -151,8 +221,10 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 	case "end":
 		s.cursor = last
 	case "space":
-		if it := &s.items[s.cursor]; it.state == ready {
-			it.selected = !it.selected
+		// On a project, select all its folders, or unselect them if they all are.
+		all := !slices.ContainsFunc(s.under(), func(i int) bool { return s.items[i].state == ready && !s.items[i].selected })
+		for _, i := range s.under() {
+			s.items[i].selected = !all && s.items[i].state == ready
 		}
 	case "all":
 		// Select every folder still there, or unselect all if they all are.
@@ -167,8 +239,9 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 			return nil
 		}
 		picked := slices.ContainsFunc(s.items, func(it item) bool { return it.selected })
+		here := s.under()
 		for i, it := range s.items {
-			if it.state == ready && (it.selected || !picked && i == s.cursor) {
+			if it.state == ready && (it.selected || !picked && slices.Contains(here, i)) {
 				s.ask = append(s.ask, it.cand.Path)
 			}
 		}
@@ -290,34 +363,79 @@ func (s *screen) view(l look, w, h int) []string {
 		lines = append(lines, clip(faint.Render("        "+names+fmt.Sprintf("%10s", "Size")), w-1))
 	}
 	hl := lipgloss.NewStyle().Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E8E4FA"), lipgloss.Color("#2B2540")))
-	for i := s.top; i < min(s.top+s.page, len(s.items)); i++ {
-		it := s.items[i]
+	for ri := s.top; ri < min(s.top+s.page, len(s.rows)); ri++ {
+		r := s.rows[ri]
+		it := s.items[r.i]
 		row := lipgloss.NewStyle()
 		bar, pathStyle := " ", lipgloss.NewStyle()
-		if i == s.cursor {
+		if ri == s.cursor {
 			row, bar, pathStyle = hl, lipgloss.NewStyle().Foreground(accent).Render("▌"), strong
+		}
+		// A project's row sums up its folders.
+		var size int64
+		var touched time.Time
+		var nready, nsel, ndeleting, nfailed int
+		for _, f := range s.items[r.i : r.i+r.n] {
+			if f.state != deleted {
+				size += f.cand.Size
+			}
+			if f.cand.Touched.After(touched) {
+				touched = f.cand.Touched
+			}
+			switch f.state {
+			case ready:
+				nready++
+				if f.selected {
+					nsel++
+				}
+			case deleting:
+				ndeleting++
+			case failed:
+				nfailed++
+			}
 		}
 		box := row.Render("   ")
 		switch {
-		case it.selected:
+		case nsel > 0 && nsel == nready:
 			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("[✓]")
 			pathStyle = pathStyle.Foreground(accent)
-		case it.state == ready:
+		case nsel > 0:
+			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("[-]")
+		case nready > 0:
 			box = faint.Inherit(row).Render("[ ]")
 		}
-		status, style := human(it.cand.Size), sizeLook(it.cand.Size)
-		switch it.state {
-		case deleting:
+		status, style := human(size), sizeLook(size)
+		switch {
+		case ndeleting > 0:
 			status, style = l.spin+" deleting", warn
-		case deleted:
-			status, style = "✓ deleted", good
-		case failed:
+		case nready > 0:
+		case nfailed > 0:
 			status, style = "✗ failed", bad
+		default:
+			status, style = "✓ deleted", good
 		}
-		path := fit(it.path, room)
-		cells := pathStyle.Inherit(row).Render(path) + row.Render(strings.Repeat(" ", max(room-ansi.StringWidth(path), 0))+"  ")
+		var cells string
+		switch {
+		case r.head:
+			kind := "  " + it.proj.kind
+			name := fit(it.proj.name, max(room-ansi.StringWidth(kind), 1))
+			kind = ansi.Truncate(kind, room-ansi.StringWidth(name), "")
+			cells = strong.Inherit(row).Render(name) + faint.Inherit(row).Render(kind) +
+				row.Render(strings.Repeat(" ", max(room-ansi.StringWidth(name+kind), 0))+"  ")
+		case r.child:
+			branch := "├─ "
+			if r.last {
+				branch = "└─ "
+			}
+			path := fit(it.sub, max(room-3, 1))
+			cells = faint.Inherit(row).Render(branch) + pathStyle.Inherit(row).Render(path) +
+				row.Render(strings.Repeat(" ", max(room-3-ansi.StringWidth(path), 0))+"  ")
+		default:
+			path := fit(it.path, room)
+			cells = pathStyle.Inherit(row).Render(path) + row.Render(strings.Repeat(" ", max(room-ansi.StringWidth(path), 0))+"  ")
+		}
 		if ageW > 0 {
-			cells += faint.Inherit(row).Render(fmt.Sprintf("%8s", age(it.cand.Touched, time.Now()))) + row.Render("  ")
+			cells += faint.Inherit(row).Render(fmt.Sprintf("%8s", age(touched, time.Now()))) + row.Render("  ")
 		}
 		pad := strings.Repeat(" ", max(10-ansi.StringWidth(status), 0))
 		lines = append(lines, clip(" "+bar+row.Render(" ")+box+row.Render("  ")+cells+style.Inherit(row).Render(pad+status)+row.Render(" "), w-1))
@@ -370,6 +488,10 @@ func (s *screen) dialog(l look, w int) string {
 		size += s.items[s.find(p)].cand.Size
 	}
 	what := folders(len(s.ask))
+	if p := s.items[s.find(s.ask[0])].proj; p != nil && len(s.ask) > 1 &&
+		!slices.ContainsFunc(s.ask, func(a string) bool { return s.items[s.find(a)].proj != p }) {
+		what += " in " + fit(p.name, min(30, max(w-40, 8)))
+	}
 	if len(s.ask) == 1 {
 		// The box adds about 28 columns around the path.
 		what = fit(s.items[s.find(s.ask[0])].path, min(40, max(w-28, 8)))
@@ -400,11 +522,7 @@ func (s *screen) help(l look, w int) string {
 		show := func(k, desc string) key.Binding { return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc)) }
 		return hm.ShortHelpView([]key.Binding{show("←→", "choose"), show("enter", "confirm"), show("y", "delete"), show("n", "cancel")})
 	}
-	var here *item
-	if len(s.items) > 0 {
-		here = &s.items[s.cursor]
-	}
-	canSelect := here != nil && here.state == ready
+	canSelect := len(s.rows) > 0 && slices.ContainsFunc(s.under(), func(i int) bool { return s.items[i].state == ready })
 	nsel := 0
 	for _, it := range s.items {
 		if it.selected {
@@ -428,7 +546,7 @@ func (s *screen) help(l look, w int) string {
 		delDesc = "delete " + folders(nsel)
 	}
 	return hm.ShortHelpView([]key.Binding{
-		bind("↑↓", "move", len(s.items) > 1, "up", "down"),
+		bind("↑↓", "move", len(s.rows) > 1, "up", "down"),
 		bind("space", "select", canSelect, "space"),
 		bind("a", "all", slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
 		bind("enter", delDesc, !s.quitting && (nsel > 0 || canSelect), "enter"),
@@ -482,6 +600,7 @@ type (
 	foundMsg struct {
 		cand sweep.Candidate
 		path string
+		proj *project
 	}
 	scanDoneMsg struct {
 		cands []sweep.Candidate
@@ -537,7 +656,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 	case foundMsg:
-		m.s.add(msg.cand, msg.path)
+		m.s.addIn(msg.cand, msg.path, msg.proj)
 	case scanDoneMsg:
 		m.s.finish(msg.cands, msg.kept)
 		if len(m.s.items) == 0 {
@@ -629,7 +748,15 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	// Send returns at once after the screen has closed.
 	m.progress.OnFound = func(c sweep.Candidate) {
 		rel, _ := filepath.Rel(root, c.Path)
-		p.Send(foundMsg{c, printable(rel)})
+		var proj *project
+		if pr, ok := sweep.FindProject(root, filepath.Dir(c.Path)); ok {
+			name, _ := filepath.Rel(root, pr.Dir)
+			if name == "." {
+				name = filepath.Base(root)
+			}
+			proj = &project{pr.Dir, printable(name), pr.Kind}
+		}
+		p.Send(foundMsg{c, printable(rel), proj})
 	}
 	go func() {
 		cands, kept := sweep.Scan(root, t, e.workers, m.progress)
