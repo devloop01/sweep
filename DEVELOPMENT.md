@@ -39,7 +39,7 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n
 |---|---|
 | `main.go` | Flags, prompt, output and exit codes |
 | `term.go` | Scan status line, colors, terminal checks |
-| `tui.go` | The interactive screen: list grouped by project, keys, drawing, confirm dialog |
+| `tui.go` | The interactive screen: list (by project with t), keys, key list, drawing, confirm dialog |
 | `upgrade.go` | `sweep upgrade` and the new-version check |
 | `internal/sweep/targets.conf` | Built-in target lists, embedded in the binary |
 | `internal/sweep/targets.go` | Parsing and validating `targets.conf` and the user's config |

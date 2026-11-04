@@ -39,6 +39,9 @@ In a terminal, sweep opens a list that fills in as it scans, biggest first:
   a             select or unselect all
   enter         delete the selected folders, or the highlighted one
   y / n         confirm or cancel a delete
+  t             group folders by project
+  o             show the folder in Finder
+  ?             list all keys
   q             quit
 
 Flags:

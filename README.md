@@ -6,17 +6,15 @@ Free up disk space by deleting `node_modules` and build caches (`.next`,
 ```
 $ cd ~/Documents/Code
 $ sweep
-  sweep   4 folders · 1.5 GB
+  sweep   3 folders · 1.5 GB
 
         Folder                       Touched        Size
-   [-]  agency  Turborepo              today      1.3 GB
-   [✓]  ├─ node_modules               2d ago      1.2 GB
- ▌      ├─ apps/web/.svelte-kit        today   ✓ deleted
-   [ ]  └─ packages/ui/.turbo          today     12.0 KB
-   [ ]  site/.vercel/output          3mo ago    200.0 KB
+   [✓]  agency/node_modules           2d ago      1.2 GB
+ ▌      agency/apps/web/.svelte-kit    today   ✓ deleted
+   [ ]  site/.vercel/output          3mo ago     12.0 KB
 
  Selected 1 folder, 1.2 GB
- ↑↓ move • space select • a all • enter delete 1 folder • q quit
+ ↑↓ move • space select • a all • enter delete 1 folder • t projects • ? help • q quit
 ```
 
 Everything it deletes comes back with `npm install` / `pnpm install` or your
@@ -57,13 +55,14 @@ sweep
 ```
 
 The list opens right away and fills in while sweep scans, biggest first.
-Folders from the same project are listed together under its name, a whole
-monorepo (Turborepo, Nx, pnpm or npm workspaces) as one project. Space or
-enter on a project's name acts on all its folders.
 Move with ↑/↓ (or j/k), select folders with **space** (`a` selects all),
 and press **enter** to delete them. With nothing selected, enter deletes the
-highlighted folder. sweep asks first: `y` deletes, `n` or esc cancels. `q`
-quits.
+highlighted folder. sweep asks first: `y` deletes, `n` or esc cancels.
+
+Press `t` to list folders under their project, a whole monorepo (Turborepo,
+Nx, pnpm or npm workspaces) as one project. Space or enter on a project's
+name acts on all its folders. `o` shows a folder in Finder, `?` lists every
+key, and `q` quits.
 
 To just look, or to clean everything at once:
 

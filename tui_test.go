@@ -269,7 +269,7 @@ func TestScreenView(t *testing.T) {
 // it isn't counted, selected by a, or deleted; space and enter on it act on
 // its folders.
 func TestScreenProjects(t *testing.T) {
-	s := &screen{}
+	s := &screen{tree: true}
 	mono := &project{"/r/mono", "mono", "Turborepo"}
 	s.addIn(sweep.Candidate{Path: "/r/mono/node_modules", Size: 5}, "mono/node_modules", mono)
 	s.add(sweep.Candidate{Path: "/r/big/node_modules", Size: 8}, "big/node_modules")
@@ -313,6 +313,37 @@ func TestScreenProjects(t *testing.T) {
 	s.key("all")
 	if n := len(slices.DeleteFunc(slices.Clone(s.items), func(it item) bool { return !it.selected })); n != 2 {
 		t.Errorf("a selected %d folders, want the 2 left", n)
+	}
+	// t turns the project rows off; the cursor moves to the project's first folder.
+	s.key("tree")
+	if len(s.rows) != len(s.items) || s.items[s.rows[s.cursor].i].path != "mono/node_modules" {
+		t.Errorf("after t: %d rows, cursor on %q", len(s.rows), s.items[s.rows[s.cursor].i].path)
+	}
+}
+
+// ? opens the key list; the next key only closes it. o asks to show the
+// highlighted folder in Finder.
+func TestScreenHelpAndReveal(t *testing.T) {
+	s := newScreen(3)
+	s.key("help")
+	if !s.helping || !strings.Contains(escapes.ReplaceAllString(strings.Join(s.view(look{}, 80, 24), "\n"), ""), "Press any key to close") {
+		t.Fatal("? didn't open the key list")
+	}
+	if s.key("enter"); s.helping || s.ask != nil {
+		t.Errorf("enter should only close the key list, ask %v", s.ask)
+	}
+	s.key("help")
+	if s.key("quit"); s.helping || s.quitting {
+		t.Error("q should only close the key list")
+	}
+	s.key("down")
+	s.key("open")
+	if s.reveal != "/r/p01/node_modules" {
+		t.Errorf("o reveals %q", s.reveal)
+	}
+	s.key("enter")
+	if s.key("help"); s.helping {
+		t.Error("? opened the key list over the confirm dialog")
 	}
 }
 
@@ -369,7 +400,7 @@ func TestInteractiveDeletesProject(t *testing.T) {
 		os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755)
 		os.WriteFile(filepath.Join(root, path), make([]byte, size), 0o644)
 	}
-	code, out := keysIn(t, root, "g\ryq")
+	code, out := keysIn(t, root, "tg\ryq") // t: list by project
 	plain := escapes.ReplaceAllString(out, "")
 	if !strings.Contains(plain, "mono  Turborepo") || !strings.Contains(plain, "└─ apps/web/.next") {
 		t.Errorf("no project row:\n%s", plain)
