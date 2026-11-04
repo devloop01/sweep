@@ -53,7 +53,7 @@ Type "s"
 Sleep 1.5s
 
 # Delete the selection, through the confirm dialog.
-Enter
+Type "d"
 Sleep 1.5s
 Left
 Sleep 600ms

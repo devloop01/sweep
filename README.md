@@ -44,14 +44,16 @@ sweep
 ```
 
 The list opens right away and fills in while sweep scans, biggest first.
-Move with ↑/↓ (or j/k), select folders with **space** (`a` selects all),
-and press **enter** to delete them. With nothing selected, enter deletes the
-highlighted folder. sweep asks first: `y` deletes, `n` or esc cancels.
+Move with ↑/↓ (or j/k), select folders with **space** or **enter** (`a`
+selects all), and press **d** (or ⌫) to delete them. With nothing selected,
+d deletes the highlighted folder. sweep asks first: `y` deletes, `n` or esc
+cancels.
 
 Press `t` to list folders under their project, a whole monorepo (Turborepo,
-Nx, pnpm or npm workspaces) as one project. Space or enter on a project's
-name acts on all its folders, ←/→ collapse and open one, tab jumps to the
-next, and `c` collapses or opens them all.
+Nx, pnpm or npm workspaces) as one project. Enter on a project's name
+collapses or opens it, space selects all its folders, and d deletes them.
+←/→ collapse and open too, tab jumps to the next project, and `c` collapses
+or opens them all.
 
 `s` sorts by size, name, or last change. sweep remembers the project view
 and sort order for next time. `o` shows a folder in Finder, `?` lists every

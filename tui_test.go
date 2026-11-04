@@ -33,6 +33,7 @@ func TestKeyNames(t *testing.T) {
 		{Code: tea.KeyEscape}: "esc", {Code: 'c', Mod: tea.ModCtrl}: "quit", {Code: 'd', Mod: tea.ModCtrl}: "quit",
 		{Code: tea.KeyLeft}: "left", {Code: tea.KeyRight}: "right", {Code: tea.KeyTab}: "next", {Code: 'c', Text: "c"}: "fold",
 		{Code: 'y', Text: "y"}: "yes", {Code: 'n', Text: "n"}: "no",
+		{Code: 'd', Text: "d"}: "delete", {Code: tea.KeyBackspace}: "delete", {Code: tea.KeyDelete}: "delete",
 		{Code: 'x', Text: "x"}: "", // other keys do nothing
 	} {
 		if got := keyNames[k.String()]; got != want {
@@ -41,30 +42,31 @@ func TestKeyNames(t *testing.T) {
 	}
 }
 
-// confirmed presses enter and answers y in the dialog.
+// confirmed presses d and answers y in the dialog.
 func confirmed(s *screen) []sweep.Candidate {
-	s.key("enter")
+	s.key("delete")
 	return s.key("yes")
 }
 
-// Enter only asks. Cancel has focus, so a held-down enter never deletes;
-// the dialog deletes the folders it asked about even if the list re-sorts.
+// d only asks. Cancel has focus, so a held-down d, or enter in the dialog,
+// never deletes; the dialog deletes the folders it asked about even if the
+// list re-sorts.
 func TestScreenConfirm(t *testing.T) {
 	s := newScreen(5)
 	s.moved = true
-	if s.key("enter") != nil || len(s.ask) != 1 {
-		t.Fatalf("enter should only open the dialog, ask %v", s.ask)
+	if s.key("delete") != nil || len(s.ask) != 1 {
+		t.Fatalf("d should only open the dialog, ask %v", s.ask)
 	}
 	if s.key("enter") != nil || s.ask != nil || s.items[0].state != ready {
 		t.Fatal("enter on Cancel should close the dialog and delete nothing")
 	}
 	for _, k := range []string{"no", "esc"} {
-		s.key("enter")
+		s.key("delete")
 		if s.key(k) != nil || s.ask != nil || s.quitting {
 			t.Errorf("%s: should cancel without quitting", k)
 		}
 	}
-	s.key("enter")
+	s.key("delete")
 	if s.key("down") != nil || s.cursor != 0 || s.ask == nil {
 		t.Error("other keys should leave the dialog open and the cursor alone")
 	}
@@ -74,7 +76,7 @@ func TestScreenConfirm(t *testing.T) {
 		t.Fatalf("Delete deleted %v, want the folder it asked about", del)
 	}
 	s.key("down")
-	s.key("enter")
+	s.key("delete")
 	if s.key("quit"); !s.quitting || s.ask != nil {
 		t.Error("quit should close the dialog and quit")
 	}
@@ -158,7 +160,7 @@ func TestScreenKeys(t *testing.T) {
 	if !s.finished() {
 		t.Error("not finished after quit and the last deletion")
 	}
-	if (&screen{}).key("enter") != nil || (&screen{}).key("end") != nil {
+	if (&screen{}).key("delete") != nil || (&screen{}).key("end") != nil {
 		t.Error("keys on an empty list")
 	}
 }
@@ -178,8 +180,8 @@ func TestScreenCursorStartsAtTop(t *testing.T) {
 	if s.moved {
 		t.Fatal("a dialog key unpinned the cursor")
 	}
-	if c := s.key("enter"); c != nil {
-		t.Fatalf("enter right after the top changed deleted %v", c)
+	if c := s.key("delete"); c != nil {
+		t.Fatalf("d right after the top changed deleted %v", c)
 	}
 	s.add(sweep.Candidate{Path: "/r/c", Size: 9}, "c")
 	if s.items[s.cursor].path != "b" {
@@ -307,7 +309,7 @@ func TestScreenProjects(t *testing.T) {
 	if slices.ContainsFunc(s.items, func(it item) bool { return it.selected }) {
 		t.Error("space again should unselect them")
 	}
-	s.key("enter")
+	s.key("delete")
 	if box := escapes.ReplaceAllString(strings.Join(s.view(look{}, 80, 24), "\n"), ""); !strings.Contains(box, "Delete 2 folders in mono (0.0 KB)?") {
 		t.Errorf("dialog doesn't name the project:\n%s", box)
 	}
@@ -352,7 +354,18 @@ func TestScreenFold(t *testing.T) {
 	if s.key("next"); on() != "b" {
 		t.Fatalf("tab went to %q, want b", on())
 	}
-	s.key("down") // b/node_modules
+	// enter on a project's row collapses and opens it, never asks.
+	if s.key("enter"); len(s.rows) != 4 || on() != "b" || s.ask != nil {
+		t.Fatalf("enter on a project: %d rows, on %q, ask %v", len(s.rows), on(), s.ask)
+	}
+	if s.key("enter"); len(s.rows) != 6 {
+		t.Fatalf("enter again should open it: %d rows", len(s.rows))
+	}
+	s.key("down") // b/node_modules: enter selects it, like space
+	if s.key("enter"); !s.items[s.rows[s.cursor].i].selected || s.ask != nil {
+		t.Fatal("enter on a folder should select it")
+	}
+	s.key("enter")
 	if s.key("left"); on() != "b" || len(s.rows) != 4 {
 		t.Fatalf("← from a folder: on %q, %d rows", on(), len(s.rows))
 	}
@@ -373,7 +386,7 @@ func TestScreenFold(t *testing.T) {
 	if s.key("fold"); len(s.rows) != 6 {
 		t.Errorf("c again should open all: %d rows", len(s.rows))
 	}
-	s.key("enter")
+	s.key("delete")
 	if s.key("next"); !s.yes {
 		t.Error("tab in the dialog should move to Delete")
 	}
@@ -471,7 +484,7 @@ func TestScreenClick(t *testing.T) {
 		t.Errorf("click on Touched: order %d", s.order)
 	}
 
-	s.key("enter")
+	s.key("delete")
 	s.view(look{}, 80, 24)
 	if s.drawn.buttons < 0 {
 		t.Fatal("dialog buttons not found")
@@ -479,7 +492,7 @@ func TestScreenClick(t *testing.T) {
 	if s.click(s.drawn.can[0]+1, s.drawn.buttons); s.ask != nil {
 		t.Error("Cancel didn't close the dialog")
 	}
-	s.key("enter")
+	s.key("delete")
 	s.view(look{}, 80, 24)
 	if del := s.click(s.drawn.del[0]+1, s.drawn.buttons); len(del) != 1 {
 		t.Errorf("Delete deleted %v", del)
@@ -525,7 +538,7 @@ func TestScreenHelpAndReveal(t *testing.T) {
 	if s.reveal != "/r/p01/node_modules" {
 		t.Errorf("o reveals %q", s.reveal)
 	}
-	s.key("enter")
+	s.key("delete")
 	if s.key("help"); s.helping {
 		t.Error("? opened the key list over the confirm dialog")
 	}
@@ -635,7 +648,7 @@ func TestInteractiveDeletesProject(t *testing.T) {
 		os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0o755)
 		os.WriteFile(filepath.Join(root, path), make([]byte, size), 0o644)
 	}
-	code, out := keysIn(t, root, "tg\ryq") // t: list by project
+	code, out := keysIn(t, root, "tgdyq") // t: list by project
 	plain := escapes.ReplaceAllString(out, "")
 	if !strings.Contains(plain, "mono  Turborepo") || !regexp.MustCompile(`└─ +(\[ \] )?apps/web/\.next`).MatchString(plain) {
 		t.Errorf("no project row:\n%s", plain)
@@ -674,7 +687,7 @@ func TestInteractiveNothingToClean(t *testing.T) {
 // (biggest first, then by path). g goes to the top: the cursor otherwise
 // stays on whichever folder the scan found first.
 func TestInteractiveDeletesHighlighted(t *testing.T) {
-	root, code, out := keysThen(t, "gj\ryq")
+	root, code, out := keysThen(t, "gjdyq")
 	if code != 0 || !strings.Contains(out, "Deleted 1 folder, freed about") {
 		t.Errorf("code %d, out:\n%q", code, out)
 	}
@@ -690,32 +703,35 @@ func TestInteractiveDeletesHighlighted(t *testing.T) {
 	}
 }
 
-// Enter opens the dialog with Cancel focused, so holding it deletes nothing;
-// ← moves to Delete.
-func TestInteractiveHeldEnterDeletesNothing(t *testing.T) {
-	root, _, out := keysThen(t, "g\r\r\r\r\rq")
-	if targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
-		t.Errorf("held enter: left %d, out:\n%q", targetsLeft(root), out)
+// Holding enter only selects and unselects. Holding d opens the dialog with
+// Cancel focused and does nothing more, so neither deletes; ← moves to
+// Delete.
+func TestInteractiveHeldKeysDeleteNothing(t *testing.T) {
+	for _, held := range []string{"g\r\r\r\r\rq", "gdddddq", "gd\r\r\r\rq"} {
+		root, _, out := keysThen(t, held)
+		if targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
+			t.Errorf("%q: left %d, out:\n%q", held, targetsLeft(root), out)
+		}
 	}
-	root, _, out = keysThen(t, "g\r\x1b[D\rq")
+	root, _, out := keysThen(t, "gd\x1b[D\rq")
 	if targetsLeft(root) != 2 || !strings.Contains(out, "Deleted 1 folder,") {
 		t.Errorf("left %d, out:\n%q", targetsLeft(root), out)
 	}
 }
 
 func TestInteractiveDeletesSelection(t *testing.T) {
-	root, _, out := keysThen(t, "g jj \ryq") // select a and e/…, delete both
+	root, _, out := keysThen(t, "g jj dyq") // select a and e/…, delete both
 	if _, err := os.Stat(filepath.Join(root, "c/.svelte-kit")); err != nil || targetsLeft(root) != 1 || !strings.Contains(out, "Deleted 2 folders,") {
 		t.Errorf("left %d, out:\n%q", targetsLeft(root), out)
 	}
-	root, _, out = keysThen(t, "a\ryq") // everything
+	root, _, out = keysThen(t, "a\x7fyq") // everything, with ⌫
 	if targetsLeft(root) != 0 || !strings.Contains(out, "Deleted 3 folders,") {
 		t.Errorf("select all: left %d, out:\n%q", targetsLeft(root), out)
 	}
 }
 
 func TestInteractiveQuitDeletesNothing(t *testing.T) {
-	for _, input := range []string{"", "q", "\x03", "jjk\x1b", "g  a a q", "g\rnq", "a\rn\x1b"} { // selecting alone deletes nothing
+	for _, input := range []string{"", "q", "\x03", "jjk\x1b", "g  a a q", "gdnq", "adn\x1b", "g\r\r\rq"} { // selecting alone deletes nothing
 		root, code, out := keysThen(t, input)
 		if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
 			t.Errorf("%q: code %d, left %d, out:\n%q", input, code, targetsLeft(root), out)
