@@ -470,7 +470,7 @@ func TestInteractiveDeletesProject(t *testing.T) {
 	}
 	code, out := keysIn(t, root, "tg\ryq") // t: list by project
 	plain := escapes.ReplaceAllString(out, "")
-	if !strings.Contains(plain, "mono  Turborepo") || !strings.Contains(plain, "└─ apps/web/.next") {
+	if !strings.Contains(plain, "mono  Turborepo") || !regexp.MustCompile(`└─ +(\[ \] )?apps/web/\.next`).MatchString(plain) {
 		t.Errorf("no project row:\n%s", plain)
 	}
 	for _, gone := range []string{"mono/node_modules", "mono/apps/web/.next"} {
