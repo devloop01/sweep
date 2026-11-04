@@ -116,8 +116,12 @@ type screen struct {
 	helping   bool            // the key list (?) is open
 	reveal    string          // a folder to show in Finder (o), for the model to open
 	drawn     layout          // where the last frame put things, for clicks
-	free      int64           // free space on DIR's disk, 0 if unknown
-	yes       bool            // the dialog's Delete button has focus (Cancel does at first)
+	lastClick struct {        // the last click on a row, to spot a double-click
+		row string
+		at  time.Time
+	}
+	free int64 // free space on DIR's disk, 0 if unknown
+	yes  bool  // the dialog's Delete button has focus (Cancel does at first)
 }
 
 // add puts a folder the scan just found into the list, biggest first.
@@ -450,6 +454,13 @@ func (s *screen) click(x, y int) (del []sweep.Candidate) {
 	case r.child && x >= 11 && x < 14, !r.child && x >= 3 && x < 6: // [ ]
 		return s.key("space")
 	}
+	// A second click on the same row soon after selects it, like space.
+	id, now := s.rowID(s.rows[ri]), time.Now()
+	if s.lastClick.row == id && now.Sub(s.lastClick.at) < 400*time.Millisecond {
+		s.lastClick.row = "" // a third click starts over
+		return s.key("space")
+	}
+	s.lastClick.row, s.lastClick.at = id, now
 	return nil
 }
 
