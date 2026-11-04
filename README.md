@@ -8,7 +8,7 @@ $ cd ~/Documents/Code
 $ sweep
   sweep   3 folders · 1.5 GB
 
-        Folder                       Touched        Size
+        Folder                       Touched       Size↓
    [✓]  agency/node_modules           2d ago      1.2 GB
  ▌      agency/apps/web/.svelte-kit    today   ✓ deleted
    [ ]  site/.vercel/output          3mo ago     12.0 KB
@@ -64,7 +64,8 @@ Nx, pnpm or npm workspaces) as one project. Space or enter on a project's
 name acts on all its folders, ←/→ collapse and open one, tab jumps to the
 next, and `c` collapses or opens them all.
 
-`o` shows a folder in Finder, `?` lists every key, and `q` quits.
+`s` sorts by size, last change, or name. `o` shows a folder in Finder, `?`
+lists every key, and `q` quits.
 
 To just look, or to clean everything at once:
 

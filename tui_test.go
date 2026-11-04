@@ -371,6 +371,48 @@ func TestScreenFold(t *testing.T) {
 	}
 }
 
+// s cycles the order: size, most recent change, name, and back. Projects
+// sort by their total or newest folder; the cursor stays on its folder.
+func TestScreenSort(t *testing.T) {
+	now := time.Now()
+	s := &screen{}
+	for _, f := range []struct {
+		path string
+		size int64
+		ago  time.Duration
+	}{{"b/node_modules", 9, 48 * time.Hour}, {"c/node_modules", 5, time.Hour}, {"a/node_modules", 1, 24 * time.Hour}} {
+		s.add(sweep.Candidate{Path: "/r/" + f.path, Size: f.size, Touched: now.Add(-f.ago)}, f.path)
+	}
+	order := func() (got []string) {
+		for _, r := range s.rows {
+			if r.head {
+				got = append(got, s.items[r.i].proj.name+"/")
+			} else {
+				got = append(got, s.items[r.i].path[:1])
+			}
+		}
+		return got
+	}
+	s.key("down") // on c
+	for _, want := range []string{"cab", "abc", "bca"} {
+		s.key("sort")
+		if got := strings.Join(order(), ""); got != want {
+			t.Errorf("order %d: %s, want %s", s.order, got, want)
+		}
+		if s.items[s.rows[s.cursor].i].path != "c/node_modules" {
+			t.Errorf("order %d: cursor left c", s.order)
+		}
+	}
+	// a's project holds the oldest and the newest folder: newest wins.
+	s.tree = true
+	s.addIn(sweep.Candidate{Path: "/r/a/.next", Size: 1, Touched: now}, "a/.next", &project{sweep.Project{Dir: "/r/a"}, "a"})
+	s.items[s.find("/r/a/node_modules")].proj = &project{sweep.Project{Dir: "/r/a"}, "a"}
+	s.key("sort")
+	if got := strings.Join(order(), ""); got != "a/aacb" {
+		t.Errorf("projects by recent: %s", got)
+	}
+}
+
 // ? opens the key list; the next key only closes it. o asks to show the
 // highlighted folder in Finder.
 func TestScreenHelpAndReveal(t *testing.T) {
