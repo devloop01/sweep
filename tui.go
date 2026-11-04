@@ -509,9 +509,11 @@ func (s *screen) view(l look, w, h int) []string {
 			if r.last {
 				branch = "└─ "
 			}
-			path := fit(it.sub, max(room-3, 1))
-			cells = faint.Inherit(row).Render(branch) + pathStyle.Inherit(row).Render(path) +
-				row.Render(strings.Repeat(" ", max(room-3-ansi.StringWidth(path), 0))+"  ")
+			// Indented under the project's name: branch, checkbox, path.
+			path := fit(it.sub, max(room-7, 1))
+			cells = faint.Inherit(row).Render(branch) + box + row.Render(" ") + pathStyle.Inherit(row).Render(path) +
+				row.Render(strings.Repeat(" ", max(room-7-ansi.StringWidth(path), 0))+"  ")
+			box = row.Render("   ")
 		default:
 			path := fit(it.path, room)
 			cells = pathStyle.Inherit(row).Render(path) + row.Render(strings.Repeat(" ", max(room-ansi.StringWidth(path), 0))+"  ")
