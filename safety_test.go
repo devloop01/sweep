@@ -83,6 +83,12 @@ func nasty(t *testing.T) (root, outside string) {
 	git(in("repo2"), "init", "-q")
 	git(in("repo2"), "add", "-A")
 	git(in("repo2"), "commit", "-qm", "x")
+	// In git but not ignored: new files nobody has committed yet.
+	write(in("wip/README"), "readme")
+	write(in("wip/build/deploy.sh"), "uncommitted work")
+	git(in("wip"), "init", "-q")
+	git(in("wip"), "add", "README")
+	git(in("wip"), "commit", "-qm", "x")
 	// Outside git, build/target may be real files.
 	write(in("loose/build/tool.sh"), "real")
 	write(in("loose/target/notes.md"), "real")
@@ -265,7 +271,7 @@ func TestNastyTreeListsOnlySafeFolders(t *testing.T) {
 	defer r.Close()
 	var traps []sweep.Candidate
 	for _, p := range []string{"linked/node_modules", "linked2/node_modules", "aliased/node_modules", "repo/dist",
-		"loose/build", "loose/target", "optout/node_modules", "withgit/.git/node_modules",
+		"loose/build", "loose/target", "wip/build", "optout/node_modules", "withgit/.git/node_modules",
 		"Tool.app/Contents/node_modules", "file/node_modules", "mono/apps/web/src", "."} {
 		traps = append(traps, sweep.Candidate{Path: filepath.Join(root, p)})
 	}

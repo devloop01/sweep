@@ -399,5 +399,5 @@ func printable(s string) string {
 
 // skipped says how many build folders sweep left alone.
 func skipped(n int) string {
-	return fmt.Sprintf("Skipped %s that may hold your files (outside git, or tracked by git).", folders(n))
+	return fmt.Sprintf("Skipped %s that may hold your files (outside git, or not ignored by git).", folders(n))
 }
