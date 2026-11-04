@@ -260,8 +260,17 @@ func (s *screen) view(l look, w, h int) []string {
 	if s.scanning {
 		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %d checked, %d found", s.checked, len(s.items)))
 	}
-	lines := []string{clip(badge.Render("sweep")+"  "+head, w-1), ""}
-	s.page = max(h-len(lines)-3, 1)
+	// A one-column margin, and in a tall enough terminal a blank line on top
+	// and the column names.
+	roomy := h >= 12
+	lines := []string{clip(" "+badge.Render("sweep")+"  "+head, w-1), ""}
+	if roomy {
+		lines = append([]string{""}, lines...)
+	}
+	s.page = max(h-len(lines)-3, 1) // a blank line, status, keys
+	if roomy && len(s.items) > 0 {
+		s.page = max(s.page-1, 1)
+	}
 	if s.cursor < s.top {
 		s.top = s.cursor
 	}
@@ -272,7 +281,14 @@ func (s *screen) view(l look, w, h int) []string {
 	if w >= 50 {
 		ageW = 10
 	}
-	room := max(w-4-2-ageW-10-1, 1) // cursor bar and checkbox, gap, age, status column, spare
+	room := max(w-1-7-2-ageW-10-1, 1) // margin, cursor bar and checkbox, gap, age, status column, spare
+	if roomy && len(s.items) > 0 {
+		names := fmt.Sprintf("%-*s  ", room, "Folder")
+		if ageW > 0 {
+			names += fmt.Sprintf("%8s  ", "Touched")
+		}
+		lines = append(lines, clip(faint.Render("        "+names+fmt.Sprintf("%10s", "Size")), w-1))
+	}
 	hl := lipgloss.NewStyle().Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E8E4FA"), lipgloss.Color("#2B2540")))
 	for i := s.top; i < min(s.top+s.page, len(s.items)); i++ {
 		it := s.items[i]
@@ -281,12 +297,13 @@ func (s *screen) view(l look, w, h int) []string {
 		if i == s.cursor {
 			row, bar, pathStyle = hl, lipgloss.NewStyle().Foreground(accent).Render("▌"), strong
 		}
-		box := " "
+		box := row.Render("   ")
 		switch {
 		case it.selected:
-			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("◉")
+			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("[✓]")
+			pathStyle = pathStyle.Foreground(accent)
 		case it.state == ready:
-			box = faint.Inherit(row).Render("○")
+			box = faint.Inherit(row).Render("[ ]")
 		}
 		status, style := human(it.cand.Size), sizeLook(it.cand.Size)
 		switch it.state {
@@ -303,7 +320,7 @@ func (s *screen) view(l look, w, h int) []string {
 			cells += faint.Inherit(row).Render(fmt.Sprintf("%8s", age(it.cand.Touched, time.Now()))) + row.Render("  ")
 		}
 		pad := strings.Repeat(" ", max(10-ansi.StringWidth(status), 0))
-		lines = append(lines, bar+row.Render(" ")+box+row.Render(" ")+cells+style.Inherit(row).Render(pad+status)+row.Render(" "))
+		lines = append(lines, clip(" "+bar+row.Render(" ")+box+row.Render("  ")+cells+style.Inherit(row).Render(pad+status)+row.Render(" "), w-1))
 	}
 	for len(lines) < h-2 {
 		lines = append(lines, "")
@@ -319,17 +336,17 @@ func (s *screen) view(l look, w, h int) []string {
 	}
 	switch {
 	case s.quitting && s.deletions > 0:
-		lines = append(lines, clip(l.spin+" "+warn.Render("Finishing deletions…"), w-1))
+		lines = append(lines, clip(" "+l.spin+" "+warn.Render("Finishing deletions…"), w-1))
 	case s.message != "":
-		lines = append(lines, clip(bad.Render(s.message), w-1))
+		lines = append(lines, clip(" "+bad.Render(s.message), w-1))
 	case nsel > 0:
-		lines = append(lines, clip(warn.Render("Selected "+folders(nsel)+", "+human(selSize)), w-1))
+		lines = append(lines, clip(" "+warn.Render("Selected "+folders(nsel)+", "+human(selSize)), w-1))
 	case s.freed > 0:
-		lines = append(lines, clip(good.Render("Freed "+human(s.freed)), w-1))
+		lines = append(lines, clip(" "+good.Render("Freed "+human(s.freed)), w-1))
 	default:
 		lines = append(lines, "")
 	}
-	lines = append(lines, s.help(l, w))
+	lines = append(lines, " "+s.help(l, w-1))
 	if s.ask == nil {
 		return lines
 	}

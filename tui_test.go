@@ -241,7 +241,7 @@ func TestScreenView(t *testing.T) {
 				t.Errorf("%dx%d: line %d wide: %q", w, h, n, l)
 			}
 		}
-		if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(escapes.ReplaceAllString(l, ""), "▌") }) {
+		if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(escapes.ReplaceAllString(l, ""), " ▌") }) {
 			t.Errorf("%dx%d: cursor row scrolled out of view", w, h)
 		}
 	}
