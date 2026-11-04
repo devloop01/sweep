@@ -5,6 +5,7 @@ package main
 import (
 	"cmp"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -586,7 +587,15 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	}}
 	// Bubble Tea's own handler quits at once on SIGTERM; sweep's quit waits
 	// for running deletions. (Ctrl-C arrives as a key: input is raw.)
-	p := tea.NewProgram(m, tea.WithInput(e.stdin), tea.WithOutput(e.stdout), tea.WithWindowSize(w, h), tea.WithoutSignalHandler())
+	// Bubble Tea stops reading quietly at end of input (a hung-up terminal
+	// whose SIGHUP never came); make it a quit, which waits for deletions.
+	var p *tea.Program
+	quit := func() { p.Send(signalMsg{}) }
+	var in io.Reader = quitOnEOF{e.stdin, quit}
+	if f, ok := e.stdin.(*os.File); ok {
+		in = quitOnEOFFile{f, quit} // still a file, so Bubble Tea sets raw mode
+	}
+	p = tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(e.stdout), tea.WithWindowSize(w, h), tea.WithoutSignalHandler())
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGHUP)
 	defer func() {
@@ -610,7 +619,37 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 		p.Send(scanDoneMsg{cands, len(kept)})
 	}()
 	_, err := p.Run()
+	// Run can end with an error while deletions run; let them finish. Taking
+	// every slot also stops queued ones from starting.
+	for range cap(sem) {
+		sem <- struct{}{}
+	}
 	return err
+}
+
+// quitOnEOF calls quit when reading fails, EOF included. It waits first:
+// Bubble Tea reads ahead and may still be passing on keys from the last read
+// (holding a lone esc for its 50ms timeout), and those come before the quit.
+type quitOnEOF struct {
+	io.Reader
+	quit func()
+}
+
+func (q quitOnEOF) Read(b []byte) (int, error) {
+	n, err := q.Reader.Read(b)
+	if err != nil {
+		time.AfterFunc(200*time.Millisecond, q.quit) // ponytail: a delay, not a handshake; Bubble Tea has no hook for "input done"
+	}
+	return n, err
+}
+
+type quitOnEOFFile struct {
+	*os.File
+	quit func()
+}
+
+func (q quitOnEOFFile) Read(b []byte) (int, error) {
+	return quitOnEOF{q.File, q.quit}.Read(b)
 }
 
 // age says how long ago t was, short enough for an 8-wide column.

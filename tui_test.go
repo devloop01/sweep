@@ -361,7 +361,7 @@ func TestInteractiveDeletesSelection(t *testing.T) {
 }
 
 func TestInteractiveQuitDeletesNothing(t *testing.T) {
-	for _, input := range []string{"q", "\x03", "jjk\x1b", "g  a a q", "g\rnq", "a\rn\x1b"} { // selecting alone deletes nothing
+	for _, input := range []string{"", "q", "\x03", "jjk\x1b", "g  a a q", "g\rnq", "a\rn\x1b"} { // selecting alone deletes nothing
 		root, code, out := keysThen(t, input)
 		if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
 			t.Errorf("%q: code %d, left %d, out:\n%q", input, code, targetsLeft(root), out)
