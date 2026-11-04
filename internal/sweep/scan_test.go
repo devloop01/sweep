@@ -357,7 +357,7 @@ func TestScanStaysOnVolume(t *testing.T) {
 		t.Error("Vet allowed a folder on another volume")
 	}
 	r := open(t, root)
-	Remove(r, tg, append(cands, Candidate{Path: filepath.Join(share, "proj/node_modules")}), 4)
+	Remove(r, tg, append(cands, At(filepath.Join(share, "proj/node_modules"))), 4)
 	for _, p := range []string{"share/proj/node_modules/f", "b/node_modules/f"} {
 		if !exists(filepath.Join(root, p)) {
 			t.Errorf("%s was deleted", p)

@@ -274,9 +274,9 @@ func TestNastyTreeListsOnlySafeFolders(t *testing.T) {
 	for _, p := range []string{"linked/node_modules", "linked2/node_modules", "aliased/node_modules", "repo/dist",
 		"loose/build", "loose/target", "wip/build", "optout/node_modules", "withgit/.git/node_modules",
 		"Tool.app/Contents/node_modules", "file/node_modules", "mono/apps/web/src", "."} {
-		traps = append(traps, sweep.Candidate{Path: filepath.Join(root, p)})
+		traps = append(traps, sweep.At(filepath.Join(root, p))) // with the folder's identity, so Vet is what refuses
 	}
-	traps = append(traps, sweep.Candidate{Path: filepath.Join(outside, "node_modules")}, sweep.Candidate{Path: outside})
+	traps = append(traps, sweep.At(filepath.Join(outside, "node_modules")), sweep.At(outside))
 	if done, errs := sweep.Remove(r, tg, traps, 4); len(done) != 0 || len(errs) != 0 {
 		t.Errorf("Remove deleted %v (errors %v)", done, errs)
 	}
