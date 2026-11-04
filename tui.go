@@ -499,8 +499,9 @@ func (s *screen) view(l look, w, h int) []string {
 	if s.scanning {
 		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %d checked, %d found", s.checked, len(s.items)))
 	}
-	if s.free > 0 {
-		head += faint.Render(" · " + human(s.free) + " free")
+	// Free space goes last, and only if it fits whole.
+	if free := " · " + human(s.free) + " free"; s.free > 0 && ansi.StringWidth(" sweep   "+head+free) < w {
+		head += faint.Render(free)
 	}
 	// A one-column margin, and in a tall enough terminal a blank line on top
 	// and the column names.
@@ -807,6 +808,7 @@ func (s *screen) help(l look, w int) string {
 type result struct {
 	path string
 	err  error
+	free int64 // the disk's free space after it, read off the UI thread
 }
 
 // interactive scans root inside the screen, lets the user delete folders
@@ -867,7 +869,6 @@ type model struct {
 	w, h     int
 	progress *sweep.Progress
 	remove   func(sweep.Candidate) result
-	root     string // DIR
 	spin     spinner.Model
 	spinning bool // a spinner tick is pending
 	dark     bool // the terminal's background, once it has said
@@ -937,7 +938,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case result:
 		m.s.done(msg.path, msg.err)
-		m.s.free = diskFree(m.root)
+		m.s.free = msg.free
 	case signalMsg:
 		m.s.quit()
 	case tea.BackgroundColorMsg:
@@ -980,7 +981,7 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	w, h := e.size()
 	sem := make(chan struct{}, max(e.workers, 1)) // deletions at once
 	s.free = diskFree(root)
-	m := &model{s: s, e: e, root: root, w: w, h: h, dark: true, progress: &sweep.Progress{}, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent))), remove: func(c sweep.Candidate) result {
+	m := &model{s: s, e: e, w: w, h: h, dark: true, progress: &sweep.Progress{}, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent))), remove: func(c sweep.Candidate) result {
 		sem <- struct{}{}
 		defer func() { <-sem }()
 		deleted, errs := sweep.Remove(r, t, []sweep.Candidate{c}, 1)
@@ -992,7 +993,7 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 			rel, _ := filepath.Rel(root, c.Path)
 			err = fmt.Errorf("kept %s: it changed since the scan", printable(rel))
 		}
-		return result{c.Path, err}
+		return result{c.Path, err, diskFree(root)}
 	}}
 	// Bubble Tea's own handler quits at once on SIGTERM; sweep's quit waits
 	// for running deletions. (Ctrl-C arrives as a key: input is raw.)
@@ -1045,13 +1046,13 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 }
 
 // diskFree is the space left for files on dir's disk, or 0 if it can't
-// tell. On APFS, space held by local Time Machine snapshots comes back later.
+// tell; a full disk is 1 byte, which shows as 0.0 KB. On APFS, space held by local Time Machine snapshots comes back later.
 func diskFree(dir string) int64 {
 	var st syscall.Statfs_t
 	if syscall.Statfs(dir, &st) != nil {
 		return 0
 	}
-	return int64(st.Bavail) * int64(st.Bsize)
+	return max(int64(st.Bavail)*int64(st.Bsize), 1)
 }
 
 // quitOnEOF calls quit when reading fails, EOF included. It waits first:

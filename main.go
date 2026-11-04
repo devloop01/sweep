@@ -359,6 +359,8 @@ func folders(n int) string {
 func human(b int64) string {
 	const k = 1024.0
 	switch f := float64(b); {
+	case f >= k*k*k*k:
+		return fmt.Sprintf("%.1f TB", f/(k*k*k*k))
 	case f >= k*k*k:
 		return fmt.Sprintf("%.1f GB", f/(k*k*k))
 	case f >= k*k:
