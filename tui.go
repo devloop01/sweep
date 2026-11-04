@@ -47,13 +47,14 @@ type item struct {
 	sub      string   // path inside the project, printable
 }
 
-// order is what the list is sorted by; s cycles through them.
+// order is what the list is sorted by. s cycles through them in the
+// columns' order, left to right: Folder, Touched, then back to Size.
 type order int
 
 const (
 	bySize   order = iota // biggest first
-	byRecent              // most recently changed first
 	byName                // A to Z
+	byRecent              // most recently changed first
 )
 
 // project is the project a folder belongs to: a monorepo, or one app.
@@ -658,7 +659,7 @@ func keyList(l look) string {
 		{"space", "select a folder, or all of a project's"},
 		{"a", "select all, or none"},
 		{"enter", "delete the selected folders, or the highlighted one"},
-		{"s", "sort by size, last change, or name"},
+		{"s", "sort by size, name, or last change"},
 		{"t", "group folders by project"},
 		{"← → h l", "collapse or open a project"},
 		{"tab ⇧tab", "next or previous project"},

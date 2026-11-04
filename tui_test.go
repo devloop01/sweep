@@ -371,7 +371,7 @@ func TestScreenFold(t *testing.T) {
 	}
 }
 
-// s cycles the order: size, most recent change, name, and back. Projects
+// s cycles the order: size, name, most recent change, and back. Projects
 // sort by their total or newest folder; the cursor stays on its folder.
 func TestScreenSort(t *testing.T) {
 	now := time.Now()
@@ -394,7 +394,7 @@ func TestScreenSort(t *testing.T) {
 		return got
 	}
 	s.key("down") // on c
-	for _, want := range []string{"cab", "abc", "bca"} {
+	for _, want := range []string{"abc", "cab", "bca"} {
 		s.key("sort")
 		if got := strings.Join(order(), ""); got != want {
 			t.Errorf("order %d: %s, want %s", s.order, got, want)
@@ -407,6 +407,7 @@ func TestScreenSort(t *testing.T) {
 	s.tree = true
 	s.addIn(sweep.Candidate{Path: "/r/a/.next", Size: 1, Touched: now}, "a/.next", &project{sweep.Project{Dir: "/r/a"}, "a"})
 	s.items[s.find("/r/a/node_modules")].proj = &project{sweep.Project{Dir: "/r/a"}, "a"}
+	s.key("sort")
 	s.key("sort")
 	if got := strings.Join(order(), ""); got != "a/aacb" {
 		t.Errorf("projects by recent: %s", got)
