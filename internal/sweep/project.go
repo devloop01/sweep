@@ -1,7 +1,6 @@
 package sweep
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"os"
@@ -24,15 +23,12 @@ func FindProject(root, dir string) (p Project, ok bool) {
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return p, ok
 		}
-		names := map[string]bool{}
-		entries, _ := os.ReadDir(d)
-		for _, e := range entries {
-			names[e.Name()] = true
-		}
-		if kind := monorepo(d, names); kind != "" {
+		// Only a few names are checked on the way up; the folder is read
+		// once, for its framework, when it's the project.
+		if kind := monorepo(d); kind != "" {
 			p, ok = Project{d, kind}, true // keep looking: the outermost one wins
-		} else if !ok && names["package.json"] {
-			p, ok = Project{d, framework(names)}, true
+		} else if !ok && hasFile(d, "package.json") {
+			p, ok = Project{d, framework(d)}, true
 		}
 		if d == root || d == filepath.Dir(d) {
 			return p, ok
@@ -40,24 +36,29 @@ func FindProject(root, dir string) (p Project, ok bool) {
 	}
 }
 
-func monorepo(dir string, names map[string]bool) string {
+func hasFile(dir, name string) bool {
+	_, err := os.Lstat(filepath.Join(dir, name))
+	return err == nil
+}
+
+func monorepo(dir string) string {
 	switch {
-	case names["turbo.json"]:
+	case hasFile(dir, "turbo.json"):
 		return "Turborepo"
-	case names["nx.json"]:
+	case hasFile(dir, "nx.json"):
 		return "Nx"
-	case names["lerna.json"]:
+	case hasFile(dir, "lerna.json"):
 		return "Lerna"
-	case names["pnpm-workspace.yaml"]:
+	case hasFile(dir, "pnpm-workspace.yaml"):
 		return "pnpm workspace"
-	case names["package.json"] && hasWorkspaces(filepath.Join(dir, "package.json")):
+	case hasWorkspaces(filepath.Join(dir, "package.json")):
 		return "workspaces"
 	}
 	return ""
 }
 
-// hasWorkspaces reports whether a package.json declares workspaces (npm,
-// Yarn, Bun).
+// hasWorkspaces reports whether a package.json lists workspaces (npm, Yarn,
+// Bun): ["apps/*"] or {"packages": ["apps/*"]}. An empty list doesn't count.
 func hasWorkspaces(path string) bool {
 	f, err := os.Open(path)
 	if err != nil {
@@ -67,11 +68,16 @@ func hasWorkspaces(path string) bool {
 	var pkg struct {
 		Workspaces json.RawMessage `json:"workspaces"`
 	}
-	if json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&pkg) != nil {
+	if json.NewDecoder(io.LimitReader(f, 1<<20)).Decode(&pkg) != nil || pkg.Workspaces == nil {
 		return false
 	}
-	w := bytes.TrimSpace(pkg.Workspaces)
-	return len(w) > 0 && !bytes.Equal(w, []byte("null"))
+	var list []string
+	if json.Unmarshal(pkg.Workspaces, &list) != nil {
+		var obj struct{ Packages []string }
+		json.Unmarshal(pkg.Workspaces, &obj)
+		list = obj.Packages
+	}
+	return len(list) > 0
 }
 
 // frameworks are found by their config file, first match wins; a name
@@ -88,10 +94,11 @@ var frameworks = []struct{ file, kind string }{
 	{"vite.config.", "Vite"},
 }
 
-func framework(names map[string]bool) string {
+func framework(dir string) string {
+	entries, _ := os.ReadDir(dir)
 	for _, f := range frameworks {
-		for n := range names {
-			if n == f.file || strings.HasSuffix(f.file, ".") && strings.HasPrefix(n, f.file) {
+		for _, e := range entries {
+			if n := e.Name(); n == f.file || strings.HasSuffix(f.file, ".") && strings.HasPrefix(n, f.file) {
 				return f.kind
 			}
 		}

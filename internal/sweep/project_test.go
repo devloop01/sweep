@@ -20,6 +20,8 @@ func TestFindProject(t *testing.T) {
 		"code/yarn/package.json":             `{"workspaces": {"packages": ["a"]}}`,
 		"code/yarn/a/package.json":           `{}`,
 		"code/plain/package.json":            `{}`,
+		"code/empty/package.json":            `{"workspaces": []}`, // not a monorepo
+		"code/empty/app/package.json":        `{}`,
 		"code/loose/x":                       ``,
 	} {
 		p := filepath.Join(top, path)
@@ -37,6 +39,7 @@ func TestFindProject(t *testing.T) {
 		{"site", "site", "SvelteKit"},
 		{"yarn/a", "yarn", "workspaces"},
 		{"plain", "plain", "Node"},
+		{"empty/app", "empty/app", "Node"},
 		{"loose", "", ""},
 		{".", "", ""},
 	} {
