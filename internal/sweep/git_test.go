@@ -39,14 +39,14 @@ func keptPaths(t *testing.T, root string, kept []string) []string {
 // build output is deleted.
 func TestGitTrackedTargetsAreKept(t *testing.T) {
 	tmp, root := build(t, "root/proj/build/tool.sh", "root/proj/dist/app.js", "root/proj/node_modules/x/f",
-		"root/proj/out/", "root/proj/.gitignore")
+		"root/proj/out/", "root/proj/target/debug/app", "root/proj/.gitignore")
 	proj := filepath.Join(root, "proj")
-	must(t, os.WriteFile(filepath.Join(proj, ".gitignore"), []byte("dist/\nnode_modules/\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(proj, ".gitignore"), []byte("dist/\nnode_modules/\ntarget/\n"), 0o644))
 	gitRepo(t, proj, "build/tool.sh", ".gitignore")
 
 	tg := DefaultTargets()
 	cands, kept := Scan(root, tg, 4, nil)
-	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/proj/dist", "root/proj/node_modules", "root/proj/out"}) {
+	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/proj/dist", "root/proj/node_modules", "root/proj/out", "root/proj/target"}) {
 		t.Errorf("listed %q", got)
 	}
 	if !slices.Equal(kept, []string{filepath.Join(proj, "build")}) {
@@ -62,12 +62,12 @@ func TestGitTrackedTargetsAreKept(t *testing.T) {
 // output), while caches like node_modules and .next are still deleted.
 func TestBuildFoldersOutsideGitAreKept(t *testing.T) {
 	tmp, root := build(t, "root/lib/build/Gruntfile.js", "root/lib/dist/x.js", "root/lib/out/",
-		"root/lib/node_modules/f", "root/lib/.next/f")
+		"root/lib/target/notes.txt", "root/lib/node_modules/f", "root/lib/.next/f")
 	cands, kept := Scan(root, DefaultTargets(), 4, nil)
 	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/lib/.next", "root/lib/node_modules"}) {
 		t.Errorf("listed %q, want only the caches", got)
 	}
-	if got := keptPaths(t, root, kept); !slices.Equal(got, []string{"lib/build", "lib/dist", "lib/out"}) {
+	if got := keptPaths(t, root, kept); !slices.Equal(got, []string{"lib/build", "lib/dist", "lib/out", "lib/target"}) {
 		t.Errorf("kept %q", got)
 	}
 	// Remove re-checks too: even if asked, it won't delete them.

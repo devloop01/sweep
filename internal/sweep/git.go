@@ -12,9 +12,9 @@ import (
 )
 
 // gitOnly are target names that some projects use for real files (scripts
-// in build/, a committed or downloaded dist/). They're deleted only when git
+// in build/, a committed or downloaded dist/, anything called target/). They're deleted only when git
 // confirms nothing in them is tracked, so outside a git repo they're kept.
-var gitOnly = []string{"dist", "build", "out"}
+var gitOnly = []string{"dist", "build", "out", "target"}
 
 // keep reports whether dir must be kept although it's a target, because it
 // may hold real files. Inside a git repo, a folder git tracks files in is
