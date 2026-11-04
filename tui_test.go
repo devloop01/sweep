@@ -435,6 +435,30 @@ func TestScreenClick(t *testing.T) {
 	if s.click(4, d.list+3); s.cursor != 3 || !s.items[3].selected {
 		t.Fatal("click on a checkbox should select it")
 	}
+	fresh := func() { s.lastClick.row = "" }
+	s.click(30, d.list+1)
+	if s.click(30, d.list+1); !s.items[1].selected {
+		t.Fatal("double-click on a row should select it")
+	}
+	if s.click(30, d.list+1); !s.items[1].selected {
+		t.Fatal("a third click shouldn't unselect it")
+	}
+	fresh()
+	s.click(30, d.list+1)
+	if s.click(30, d.list+1); s.items[1].selected {
+		t.Fatal("another double-click should unselect it")
+	}
+	fresh()
+	s.click(30, d.list+1)
+	s.lastClick.at = time.Now().Add(-time.Second)
+	if s.click(30, d.list+1); s.items[1].selected {
+		t.Fatal("two slow clicks aren't a double-click")
+	}
+	fresh()
+	s.click(30, d.list+1)
+	if s.click(30, d.list+2); s.items[2].selected || s.items[1].selected {
+		t.Fatal("clicks on two rows aren't a double-click")
+	}
 	s.add(sweep.Candidate{Path: "/r/new", Size: 99 << 20}, "new") // re-sorts, not drawn yet
 	if s.click(30, d.list); s.items[s.rows[s.cursor].i].path != "p00/node_modules" {
 		t.Errorf("click hit %q, want the folder drawn there", s.items[s.rows[s.cursor].i].path)

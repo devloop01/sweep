@@ -67,8 +67,9 @@ next, and `c` collapses or opens them all.
 `s` sorts by size, name, or last change. `o` shows a folder in Finder, `?`
 lists every key, and `q` quits.
 
-The mouse works too: scroll, click a row or its checkbox, click ▾ to fold a
-project, a column name to sort by it, or the dialog's buttons.
+The mouse works too: scroll, click a row or its checkbox (or double-click
+the row) to select it, click ▾ to fold a project, a column name to sort by
+it, or the dialog's buttons.
 
 To just look, or to clean everything at once:
 
