@@ -245,6 +245,11 @@ func TestScreenView(t *testing.T) {
 			t.Errorf("%dx%d: cursor row scrolled out of view", w, h)
 		}
 	}
+	s.free = 38 << 30
+	if head := escapes.ReplaceAllString(s.view(look{}, 80, 24)[1], ""); !strings.Contains(head, "· 38.0 GB free") {
+		t.Errorf("header: %q", head)
+	}
+	s.free = 0
 	if help := escapes.ReplaceAllString(s.view(look{}, 80, 24)[23], ""); !strings.Contains(help, "space select") || !strings.Contains(help, "q quit") {
 		t.Errorf("help bar: %q", help)
 	}
