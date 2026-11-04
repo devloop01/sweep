@@ -14,6 +14,7 @@ Needs Go 1.27 or later.
 make test      # go vet + go test -race
 make build     # ./bin/sweep
 make release   # dist/sweep-darwin-arm64
+make demo      # re-record demo/sweep.gif for the README (needs vhs)
 ```
 
 Tests only touch folders under `t.TempDir()`. The mount test attaches small

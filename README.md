@@ -1,24 +1,13 @@
 # sweep
 
-Free up disk space by deleting `node_modules` and build caches (`.next`,
-`.svelte-kit`, `.turbo`, …) from all your projects at once.
+Free up disk space by deleting `node_modules`, build caches (`.next`,
+`.svelte-kit`, `.turbo`, …), Rust `target` and Python caches from all your
+projects at once.
 
-```
-$ cd ~/Documents/Code
-$ sweep
-  sweep   3 folders · 1.5 GB · 38.2 GB free
+![sweep listing build folders, grouping them by project, sorting by last change, and deleting two after confirming](demo/sweep.gif)
 
-        Folder                       Touched       Size↓
-   [✓]  agency/node_modules           2d ago      1.2 GB
- ▌      agency/apps/web/.svelte-kit    today   ✓ deleted
-   [ ]  site/.vercel/output          3mo ago     12.0 KB
-
- Selected 1 folder, 1.2 GB
- space select • a all • enter delete (1) • t projects • ? help • q quit
-```
-
-Everything it deletes comes back with `npm install` / `pnpm install` or your
-next dev or build run.
+Everything it deletes comes back with `npm install` / `pnpm install`, or
+your next dev, build, cargo or test run.
 
 ## Install
 
