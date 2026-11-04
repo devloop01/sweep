@@ -609,7 +609,7 @@ func (s *screen) view(l look, w, h int) []string {
 	s.drawn = layout{head: -1, buttons: -1}
 	if roomy && len(s.items) > 0 {
 		s.drawn.head = len(lines)
-		s.drawn.cols = [3][2]int{{8, 8 + room}, {8 + room + 2, 8 + room + 2 + ageW - 2}, {8 + room + ageW, 8 + room + ageW + 10}}
+		s.drawn.cols = [3][2]int{{8, 8 + room}, {8 + room + 2, 8 + room + 2 + ageW - 2}, {8 + room + 2 + ageW, 8 + room + 2 + ageW + 10}}
 		// The column the list is sorted by is marked with an arrow.
 		label := func(name string, o order, width int) string {
 			if s.order == o {
@@ -744,24 +744,26 @@ func (s *screen) view(l look, w, h int) []string {
 		return lines
 	}
 	bw, bh := lipgloss.Width(box), lipgloss.Height(box)
-	by := max((h-bh)/2, 0)
+	bx, by := max((w-bw)/2, 0), max((h-bh)/2, 0)
 	out := lipgloss.NewCompositor(
 		lipgloss.NewLayer(strings.Join(lines, "\n")),
-		lipgloss.NewLayer(box).X(max((w-bw)/2, 0)).Y(by).Z(1),
+		lipgloss.NewLayer(box).X(bx).Y(by).Z(1),
 	).Render()
 	lines = strings.Split(out, "\n")
 	for i := range lines {
 		lines[i] = clip(lines[i], w-1)
 	}
-	// The buttons sit above the box's bottom padding and border.
+	// The buttons sit above the box's bottom padding and border. They're
+	// found in the box itself, not the screen line, where list text beside
+	// the box could also say "Delete".
 	if y := by + bh - 3; s.ask != nil && y < min(len(lines), h) {
-		plain := ansi.Strip(lines[y])
+		plain := ansi.Strip(strings.Split(box, "\n")[bh-3])
 		find := func(label string) [2]int {
 			i := strings.LastIndex(plain, label)
 			if i < 0 {
 				return [2]int{}
 			}
-			x := ansi.StringWidth(plain[:i])
+			x := bx + ansi.StringWidth(plain[:i])
 			return [2]int{x - 2, x + len(label) + 2} // with the button's padding
 		}
 		s.drawn.buttons, s.drawn.del, s.drawn.can = y, find("Delete"), find("Cancel")
@@ -990,7 +992,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		k, ok := keyNames[msg.String()]
 		if !ok {
-			break // other keys do nothing, not even unpin the cursor
+			m.s.helping = false // the key list closes on any key, as it says
+			break               // other keys do nothing, not even unpin the cursor
 		}
 		for _, c := range m.s.key(k) {
 			cmds = append(cmds, func() tea.Msg { return m.remove(c) })
