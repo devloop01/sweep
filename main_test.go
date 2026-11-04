@@ -214,8 +214,8 @@ func TestPrintable(t *testing.T) {
 
 func TestHuman(t *testing.T) {
 	for b, want := range map[int64]string{
-		0: "0.0 KB", 12 * 1024: "12.0 KB", 340*1024*1024 + 512*1024: "340.5 MB",
-		1288490189: "1.2 GB", 3 << 40: "3.0 TB",
+		0: "0.0 KB", 12_000: "12.0 KB", 340_500_000: "340.5 MB",
+		1_200_000_000: "1.2 GB", 3_000_000_000_000: "3.0 TB", 1 << 30: "1.1 GB",
 	} {
 		if got := human(b); got != want {
 			t.Errorf("human(%d) = %q, want %q", b, got, want)

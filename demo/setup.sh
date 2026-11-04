@@ -8,10 +8,11 @@ rm -rf projects
 mkdir projects
 cd projects
 
-# file PATH SIZE_KB: a file of zeros (real disk use; sweep counts that).
+# file PATH SIZE_KB: SIZE_KB thousand bytes of zeros (real disk use; sweep
+# counts that).
 file() {
 	mkdir -p "$(dirname "$1")"
-	dd if=/dev/zero of="$1" bs=1024 count="$2" 2>/dev/null
+	dd if=/dev/zero of="$1" bs=1000 count="$2" 2>/dev/null
 }
 json() { mkdir -p "$1" && echo '{}' >"$1/package.json"; }
 
