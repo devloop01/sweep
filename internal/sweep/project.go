@@ -16,7 +16,8 @@ type Project struct {
 
 // FindProject returns the project dir belongs to, looking no higher than
 // root: the outermost monorepo above it, or else the nearest folder with a
-// package.json. Folders outside any project return false.
+// package.json, Cargo.toml or pyproject.toml. Folders outside any project
+// return false.
 func FindProject(root, dir string) (p Project, ok bool) {
 	for d := dir; ; d = filepath.Dir(d) {
 		rel, err := filepath.Rel(root, d)
@@ -27,8 +28,15 @@ func FindProject(root, dir string) (p Project, ok bool) {
 		// once, for its framework, when it's the project.
 		if kind := monorepo(d); kind != "" {
 			p, ok = Project{d, kind}, true // keep looking: the outermost one wins
-		} else if !ok && hasFile(d, "package.json") {
-			p, ok = Project{d, framework(d)}, true
+		} else if !ok {
+			switch {
+			case hasFile(d, "package.json"):
+				p, ok = Project{d, framework(d)}, true
+			case hasFile(d, "Cargo.toml"):
+				p, ok = Project{d, "Rust"}, true
+			case hasFile(d, "pyproject.toml"):
+				p, ok = Project{d, "Python"}, true
+			}
 		}
 		if d == root || d == filepath.Dir(d) {
 			return p, ok
@@ -53,8 +61,26 @@ func monorepo(dir string) string {
 		return "pnpm workspace"
 	case hasWorkspaces(filepath.Join(dir, "package.json")):
 		return "workspaces"
+	case cargoWorkspace(filepath.Join(dir, "Cargo.toml")):
+		return "Cargo workspace"
 	}
 	return ""
+}
+
+// cargoWorkspace reports whether a Cargo.toml has a [workspace] table.
+func cargoWorkspace(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b, _ := io.ReadAll(io.LimitReader(f, 1<<20))
+	for line := range strings.Lines(string(b)) {
+		if strings.TrimSpace(line) == "[workspace]" {
+			return true
+		}
+	}
+	return false
 }
 
 // hasWorkspaces reports whether a package.json lists workspaces (npm, Yarn,

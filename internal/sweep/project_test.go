@@ -23,6 +23,10 @@ func TestFindProject(t *testing.T) {
 		"code/empty/package.json":            `{"workspaces": []}`, // not a monorepo
 		"code/empty/app/package.json":        `{}`,
 		"code/loose/x":                       ``,
+		"code/rs/Cargo.toml":                 "[workspace]\nmembers = [\"cli\"]\n",
+		"code/rs/cli/Cargo.toml":             "[package]\nname = \"cli\"\n",
+		"code/tool/Cargo.toml":               "[package]\n# [workspace] in a comment doesn't count\n",
+		"code/py/pyproject.toml":             ``,
 	} {
 		p := filepath.Join(top, path)
 		os.MkdirAll(filepath.Dir(p), 0o755)
@@ -40,6 +44,9 @@ func TestFindProject(t *testing.T) {
 		{"yarn/a", "yarn", "workspaces"},
 		{"plain", "plain", "Node"},
 		{"empty/app", "empty/app", "Node"},
+		{"rs/cli", "rs", "Cargo workspace"},
+		{"tool", "tool", "Rust"},
+		{"py", "py", "Python"},
 		{"loose", "", ""},
 		{".", "", ""},
 	} {
