@@ -76,8 +76,10 @@ func TestBuildFoldersOutsideGitAreKept(t *testing.T) {
 	if got := keptPaths(t, root, kept); !slices.Equal(got, []string{"lib/build", "lib/dist", "lib/out", "lib/target"}) {
 		t.Errorf("kept %q", got)
 	}
-	// Remove re-checks too: even if asked, it won't delete them.
-	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{At(filepath.Join(root, "lib/build"))}, 4)
+	// Remove re-checks too: even if asked, it won't delete them. Only Vet
+	// stands in the way here: the folder is real, in root, and is the one
+	// the candidate names.
+	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{at(t, filepath.Join(root, "lib/build"))}, 4)
 	if len(deleted) != 0 || !exists(filepath.Join(root, "lib/build/Gruntfile.js")) {
 		t.Error("deleted a build folder outside git")
 	}

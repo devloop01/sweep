@@ -49,16 +49,6 @@ type Candidate struct {
 	fi os.FileInfo // the folder the scan saw; Remove deletes only that one
 }
 
-// At returns a Candidate for the folder at path as it is now, unmeasured.
-// Remove runs every check on it all the same; tests use it to aim Remove at
-// folders Scan would never list, so they reach Vet rather than being refused
-// for not coming from a scan.
-func At(path string) Candidate {
-	c := Candidate{Path: path}
-	c.fi, _ = os.Lstat(path)
-	return c
-}
-
 // Scan finds the target folders under root, which must already be resolved
 // and passed by CheckRoot. Targets that may hold real files (see keep) are
 // not candidates; their paths are returned as kept. It never follows symlinks, never enters .git or
