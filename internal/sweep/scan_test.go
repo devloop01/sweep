@@ -268,10 +268,7 @@ func TestHardLinksCountedOnce(t *testing.T) {
 	if len(file) != 1 {
 		t.Fatalf("want 1 shared inode, got %v", file)
 	}
-	var fileSize int64
-	for _, s := range file {
-		fileSize = s
-	}
+	fileSize := file[0].bytes
 	want := blocks(a) + blocks(b) + fileSize
 
 	first := scanned(root, DefaultTargets(), 4)
@@ -440,5 +437,66 @@ func TestMeasureOfMissingFolderHasNoIdentity(t *testing.T) {
 	_, root := build(t, "root/a/")
 	if m := measure(filepath.Join(root, "a/node_modules"), nil); m.fi != nil {
 		t.Errorf("measured a missing folder: %+v", m)
+	}
+}
+
+// A stopped scan returns soon, with only folders it measured to the end.
+func TestStopEndsScan(t *testing.T) {
+	var tree []string
+	for i := range 200 {
+		tree = append(tree, fmt.Sprintf("root/p%03d/node_modules/pkg/f", i))
+	}
+	_, root := build(t, tree...)
+	p := &Progress{}
+	p.Stop()
+	if cands, kept := Scan(root, DefaultTargets(), 4, p); len(cands) != 0 || len(kept) != 0 || p.Dirs() != 0 {
+		t.Errorf("a scan stopped before it began listed %d, kept %d, read %d folders", len(cands), len(kept), p.Dirs())
+	}
+
+	// Stopped part-way: whatever it returns was reported and is whole.
+	var mu sync.Mutex
+	found := map[string]int64{}
+	p = &Progress{}
+	p.OnFound = func(c Candidate) {
+		mu.Lock()
+		found[c.Path] = c.Size
+		mu.Unlock()
+		p.Stop()
+	}
+	cands, _ := Scan(root, DefaultTargets(), 4, p)
+	if len(cands) == 0 || len(cands) == 200 {
+		t.Errorf("a scan stopped at the first folder listed %d of 200", len(cands))
+	}
+	whole := measure(filepath.Join(root, "p000/node_modules"), nil).own
+	for _, c := range cands {
+		if size, ok := found[c.Path]; !ok || size != c.Size || c.Size != whole {
+			t.Errorf("%s: size %d, reported %d (%v), want %d", c.Path, c.Size, size, ok, whole)
+		}
+	}
+}
+
+// A file linked twice inside one target and into two more is counted once,
+// against the first target in path order.
+func TestHardLinksAcrossAndWithinTargets(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/x/", "root/b/node_modules/", "root/c/node_modules/")
+	dir := func(n string) string { return filepath.Join(root, n, "node_modules") }
+	must(t, os.WriteFile(filepath.Join(dir("b"), "f"), make([]byte, 1<<20), 0o644))
+	for _, to := range []string{"a/node_modules/f", "a/node_modules/x/again", "c/node_modules/f"} {
+		must(t, os.Link(filepath.Join(dir("b"), "f"), filepath.Join(root, to)))
+	}
+	must(t, os.WriteFile(filepath.Join(dir("c"), "own"), make([]byte, 1<<16), 0o644))
+
+	ma, mb, mc := measure(dir("a"), nil), measure(dir("b"), nil), measure(dir("c"), nil)
+	if len(ma.shared) != 1 || len(mb.shared) != 1 || len(mc.shared) != 1 {
+		t.Fatalf("shared files: a %v, b %v, c %v; want one each", ma.shared, mb.shared, mc.shared)
+	}
+	file := ma.shared[0].bytes
+	want := map[string]int64{dir("a"): ma.own + file, dir("b"): mb.own, dir("c"): mc.own}
+	for _, workers := range []int{1, 4} {
+		for _, c := range scanned(root, DefaultTargets(), workers) {
+			if c.Size != want[c.Path] {
+				t.Errorf("workers=%d: %s is %d, want %d", workers, c.Path, c.Size, want[c.Path])
+			}
+		}
 	}
 }

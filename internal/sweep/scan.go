@@ -19,12 +19,19 @@ import (
 type Progress struct {
 	dirs    atomic.Int64
 	current atomic.Pointer[string]
+	stop    atomic.Bool
 
 	// OnFound, if set, is called (from Scan's goroutines) with each folder as
 	// soon as it's measured. Its Size counts files hard-linked into other
 	// folders in full; Scan's result has the final sizes.
 	OnFound func(Candidate)
 }
+
+// Stop makes the running Scan return soon, with the folders it has finished
+// measuring. For a caller that no longer wants the rest.
+func (p *Progress) Stop() { p.stop.Store(true) }
+
+func (p *Progress) stopped() bool { return p != nil && p.stop.Load() }
 
 // Dirs is how many folders the scan has read so far.
 func (p *Progress) Dirs() int64 { return p.dirs.Load() }
@@ -77,11 +84,16 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 	// One folder's matches are vetted together (one question to git for all
 	// of them), then measured one by one, by whichever workers are free.
 	vetted := make(chan string)
+	rs := &repos{t: t} // asks each repository once, where keep asks per folder
+	defer rs.close()
 	for range workers {
 		vetting.Go(func() {
 			for ps := range found {
+				if progress.stopped() {
+					continue // drain
+				}
 				ps = slices.DeleteFunc(ps, func(p string) bool { return !vetPath(root, p, t) })
-				for i, k := range keepAll(ps) {
+				for i, k := range rs.keepAll(ps) {
 					if k {
 						mu.Lock()
 						kept = append(kept, ps[i])
@@ -100,17 +112,23 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 	for range workers {
 		wg.Go(func() {
 			for p := range vetted {
+				if progress.stopped() {
+					continue // drain
+				}
 				m := measure(p, progress)
 				if m.fi == nil {
 					continue // gone or unreadable since it was found: Remove would refuse it
+				}
+				if progress.stopped() {
+					continue // not measured to the end
 				}
 				if m.otherFS {
 					continue // a mount inside the target: deleting would reach into it
 				}
 				if progress != nil && progress.OnFound != nil {
 					size := m.own
-					for _, b := range m.shared {
-						size += b
+					for _, l := range m.shared {
+						size += l.bytes
 					}
 					progress.OnFound(Candidate{Path: m.path, Size: size, Touched: m.touched, fi: m.fi})
 				}
@@ -125,17 +143,34 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 	// A file hard-linked into several targets is counted against the first
 	// one in path order, so sizes don't depend on which worker got there first.
 	slices.SortFunc(results, func(a, b measured) int { return strings.Compare(a.path, b.path) })
-	seen := map[inode]bool{}
-	cands = make([]Candidate, 0, len(results))
+	// All the links in one list, sorted so each file's first target comes
+	// first: 24 bytes a link, where a set of the files seen costs twice that.
+	type owned struct {
+		link
+		target int32 // index in results
+	}
+	n := 0
 	for _, m := range results {
-		size := m.own
-		for ino, b := range m.shared {
-			if !seen[ino] {
-				seen[ino] = true
-				size += b
-			}
+		n += len(m.shared)
+	}
+	links := make([]owned, 0, n)
+	sizes := make([]int64, len(results))
+	for i := range results {
+		sizes[i] = results[i].own
+		for _, l := range results[i].shared {
+			links = append(links, owned{l, int32(i)})
 		}
-		cands = append(cands, Candidate{Path: m.path, Size: size, Touched: m.touched, fi: m.fi})
+		results[i].shared = nil
+	}
+	slices.SortFunc(links, func(a, b owned) int { return cmp.Or(cmp.Compare(a.ino, b.ino), cmp.Compare(a.target, b.target)) })
+	for i, l := range links {
+		if i == 0 || links[i-1].ino != l.ino {
+			sizes[l.target] += l.bytes
+		}
+	}
+	cands = make([]Candidate, 0, len(results))
+	for i, m := range results {
+		cands = append(cands, Candidate{Path: m.path, Size: sizes[i], Touched: m.touched, fi: m.fi})
 	}
 	slices.SortFunc(cands, func(a, b Candidate) int {
 		return cmp.Or(cmp.Compare(b.Size, a.Size), strings.Compare(a.Path, b.Path))
@@ -154,6 +189,9 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- []st
 	var wg sync.WaitGroup
 	var walk func(dir string)
 	walk = func(dir string) {
+		if progress.stopped() {
+			return
+		}
 		if progress != nil {
 			progress.dirs.Add(1)
 			progress.current.Store(&dir)
@@ -246,15 +284,20 @@ func dev(fi os.FileInfo) uint64 {
 	return uint64(fi.Sys().(*syscall.Stat_t).Dev)
 }
 
-type inode struct{ dev, ino uint64 }
+// link is a hard-linked file: its inode number and allocated bytes. The
+// device isn't kept: everything in a target is on root's volume.
+type link struct {
+	ino   uint64
+	bytes int64
+}
 
 type measured struct {
 	path    string
-	own     int64           // blocks of everything not hard-linked
-	shared  map[inode]int64 // blocks of hard-linked files, by inode
-	otherFS bool            // something inside is on another volume
-	touched time.Time       // newest mtime inside
-	fi      os.FileInfo     // Lstat of path
+	own     int64       // blocks of everything not hard-linked
+	shared  []link      // the hard-linked files, each once, sorted by inode
+	otherFS bool        // something inside is on another volume
+	touched time.Time   // newest mtime inside
+	fi      os.FileInfo // Lstat of path
 }
 
 // measure adds up allocated blocks under p like `du -sk`, without
@@ -262,7 +305,7 @@ type measured struct {
 // folder it enters counts towards progress (may be nil), so a scan doesn't
 // look stuck while big node_modules are measured.
 func measure(p string, progress *Progress) measured {
-	m := measured{path: p, shared: map[inode]int64{}}
+	m := measured{path: p}
 	fi, err := os.Lstat(p)
 	if err != nil {
 		return m
@@ -272,6 +315,9 @@ func measure(p string, progress *Progress) measured {
 	filepath.WalkDir(p, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // count what can be read
+		}
+		if progress.stopped() {
+			return filepath.SkipAll
 		}
 		if progress != nil && d.IsDir() {
 			progress.dirs.Add(1)
@@ -291,12 +337,16 @@ func measure(p string, progress *Progress) measured {
 		}
 		b := st.Blocks * 512
 		if !d.IsDir() && st.Nlink > 1 {
-			m.shared[inode{uint64(st.Dev), st.Ino}] = b
+			m.shared = append(m.shared, link{uint64(st.Ino), b})
 		} else {
 			m.own += b
 		}
 		return nil
 	})
+	// A slice, not a map: pnpm hard-links every file it installs, and a
+	// scan can see millions. This is 16 bytes a file; a map was about 55.
+	slices.SortFunc(m.shared, func(a, b link) int { return cmp.Compare(a.ino, b.ino) })
+	m.shared = slices.Clone(slices.CompactFunc(m.shared, func(a, b link) bool { return a.ino == b.ino })) // Clone: no spare capacity
 	return m
 }
 

@@ -278,6 +278,11 @@ func (s *screen) find(path string) int {
 // key applies one key. It returns the folders to delete, if any; only
 // answering the confirm dialog does. The cursor never moves on its own.
 func (s *screen) key(k string) (del []sweep.Candidate) {
+	if k == "interrupt" {
+		// ctrl+c and ctrl+d quit from anywhere, the key list included; q
+		// there is "any key", and only closes it.
+		s.helping, k = false, "quit"
+	}
 	if s.helping {
 		s.helping = false // any key closes the key list
 		return nil
@@ -973,7 +978,7 @@ var keyNames = map[string]string{
 	"up": "up", "k": "up", "down": "down", "j": "down",
 	"pgup": "pgup", "pgdown": "pgdn", "home": "home", "g": "home", "end": "end", "G": "end",
 	"space": "space", "enter": "enter", "a": "all", "d": "delete", "backspace": "delete", "delete": "delete",
-	"q": "quit", "esc": "esc", "ctrl+c": "quit", "ctrl+d": "quit",
+	"q": "quit", "esc": "esc", "ctrl+c": "interrupt", "ctrl+d": "interrupt",
 	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "next", "shift+tab": "prev", "c": "fold", "s": "sort",
 	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help",
 }
@@ -1052,6 +1057,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds, m.spinning = append(cmds, m.spin.Tick), true
 	}
 	m.s.checked = m.progress.Dirs()
+	if m.s.quitting {
+		m.progress.Stop() // nobody is waiting for the rest of the scan
+	}
 	if m.s.finished() && m.answered {
 		return m, tea.Quit
 	}
