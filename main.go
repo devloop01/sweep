@@ -1,7 +1,7 @@
 //go:build darwin && arm64
 
-// sweep finds and deletes node_modules and framework build/cache folders
-// (.svelte-kit, .turbo, .next, ...) under a directory.
+// sweep finds node_modules and framework build/cache folders (.svelte-kit,
+// .turbo, .next, ...) under a directory and moves them to the Trash.
 package main
 
 import (
@@ -27,8 +27,12 @@ import (
 
 var version = "dev" // set with -ldflags "-X main.version=..."
 
-const usage = `sweep deletes node_modules and build/cache folders (.svelte-kit,
-.turbo, .next, ...) under a folder.
+// findTrash is where folders go; tests swap it for a temporary folder so
+// they never touch the real Trash.
+var findTrash = sweep.FindTrash
+
+const usage = `sweep moves node_modules and build/cache folders (.svelte-kit,
+.turbo, .next, ...) under a folder to the Trash.
 
 Usage:
   sweep [flags] [DIR]    DIR defaults to the current folder
@@ -38,8 +42,8 @@ In a terminal, sweep opens a list that fills in as it scans, biggest first:
   ↑/↓ or j/k    move (g/G: top/bottom)
   space/enter   select or unselect a folder (enter on a project: collapse/open)
   a             select or unselect all
-  d or ⌫        delete the selected folders, or the highlighted one
-  y / n         confirm or cancel a delete
+  d or ⌫        move the selected folders, or the highlighted one, to the Trash
+  y / n         confirm or cancel
   s             sort by size, name, or last change
   t             group folders by project
   ←/→ or h/l    collapse or open a project (tab: next project, c: all)
@@ -50,13 +54,14 @@ In a terminal, sweep opens a list that fills in as it scans, biggest first:
   double-click a row to select it.
 
 Flags:
-  -n, --dry-run   print the list, delete nothing
-  -y, --yes       delete everything in the list without asking
+  -n, --dry-run   print the list, move nothing
+  -y, --yes       move everything in the list to the Trash without asking
   -h, --help      show this help
       --version   print the version
 
-Everything sweep deletes by default comes back with npm/pnpm install or the
-next dev or build run.
+Folders in the Trash still take up space until you empty it. Everything
+sweep removes by default comes back with npm/pnpm install or the next dev
+or build run.
 
 To change which folders it deletes, list names in
 ~/.config/sweep/targets.conf, one per line (!name to stop deleting one). See
@@ -247,10 +252,19 @@ func run(args []string, e env) int {
 	if custom {
 		fmt.Fprintf(e.stdout, "Using targets from %s\n", printable(e.configPath))
 	}
+	// Folders go to the Trash. Find it before scanning, so a disk without
+	// one stops the run up front.
+	var trash string
+	if !dryRun {
+		if trash, err = findTrash(root); err != nil {
+			fmt.Fprintln(e.stderr, "sweep: can't use the Trash here:", printable(err.Error()))
+			return 1
+		}
+	}
 	// In a terminal, deleting is interactive: the list opens at once and
 	// fills in as the scan runs. -n only lists; -y deletes everything.
 	if !dryRun && !yes && e.isTTY && e.cols > 0 {
-		return interactive(e, r, targets, root)
+		return interactive(e, r, targets, root, trash)
 	}
 	fmt.Fprintf(e.stdout, "Scanning %s ...\n", printable(root))
 	var progress sweep.Progress
@@ -338,7 +352,7 @@ func run(args []string, e env) int {
 	skipped()
 
 	if dryRun {
-		fmt.Fprintln(e.stdout, "Dry run: nothing deleted.")
+		fmt.Fprintln(e.stdout, "Dry run: nothing moved.")
 		return 0
 	}
 	if !yes && !confirm(e) {
@@ -346,7 +360,7 @@ func run(args []string, e env) int {
 		return 0
 	}
 
-	deleted, errs := sweep.Remove(r, targets, cands, e.workers)
+	deleted, errs := sweep.Remove(r, targets, cands, e.workers, trash)
 	var freed int64
 	for _, c := range deleted {
 		freed += c.Size
@@ -355,19 +369,33 @@ func run(args []string, e env) int {
 		fmt.Fprintln(e.stderr, "sweep:", printable(err.Error()))
 	}
 	if len(errs) > 0 {
-		fmt.Fprintf(e.stdout, "Deleted %d of %s, freed about %s.\n", len(deleted), folders(len(cands)), human(freed))
+		fmt.Fprintln(e.stdout, summary(len(deleted), len(cands), freed))
 		return 1
 	}
-	fmt.Fprintln(e.stdout, e.paint(green, fmt.Sprintf("Deleted %s, freed about %s.", folders(len(deleted)), human(freed))))
+	fmt.Fprintln(e.stdout, e.paint(green, summary(len(deleted), len(deleted), freed)))
+	fmt.Fprintln(e.stdout, emptyHint)
 	return 0
+}
+
+// emptyHint follows a move to the Trash, which frees nothing by itself.
+const emptyHint = "Empty the Trash to get the space back."
+
+// summary says n of the total folders asked for, holding about size
+// bytes, went to the Trash.
+func summary(n, total int, size int64) string {
+	what := folders(total)
+	if n != total {
+		what = fmt.Sprintf("%d of %s", n, what)
+	}
+	return fmt.Sprintf("Moved %s to the Trash, about %s.", what, human(size))
 }
 
 // confirm asks once. Only y/yes proceeds; EOF or a non-terminal stdin cancels.
 func confirm(e env) bool {
-	fmt.Fprint(e.stdout, "Delete all of these? [y/N] ")
+	fmt.Fprint(e.stdout, "Move all of these to the Trash? [y/N] ")
 	if !e.isTTY {
 		fmt.Fprintln(e.stdout)
-		fmt.Fprintln(e.stderr, "sweep: stdin is not a terminal; use --yes to delete without asking.")
+		fmt.Fprintln(e.stderr, "sweep: stdin is not a terminal; use --yes to go ahead without asking.")
 		return false
 	}
 	if e.flushInput != nil {

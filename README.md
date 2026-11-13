@@ -42,12 +42,13 @@ cd ~/Documents/Code
 sweep
 ```
 
-Pick folders with space, press `d`, and confirm.
+Pick folders with space, press `d`, and confirm. The folders go to the
+Trash, so nothing is lost if you change your mind.
 
 | Key | Does |
 |---|---|
 | `space` or `enter` | select a folder |
-| `d` | delete the selected folders (sweep asks first) |
+| `d` | move the selected folders to the Trash (sweep asks first) |
 | `t` | group folders by project |
 | `s` | sort by size, name, or last change |
 | `?` | show every key |
@@ -59,8 +60,18 @@ To just see what's there, or clean everything without asking:
 
 ```sh
 sweep -n     # list only, delete nothing
-sweep -y     # delete everything in the list
+sweep -y     # move everything in the list to the Trash
 ```
+
+## Getting a folder back
+
+Open the Trash in Finder and drag the folder back where it was. Finder's
+Put Back doesn't know about folders sweep moved, so each one is named after
+the place it came from: `Code › web › node_modules` came from
+`web/node_modules` in your `Code` folder. Rename it back to the last part
+(`node_modules`) once it's in place.
+
+Folders in the Trash still take up space: empty the Trash to get it back.
 
 ## What it deletes
 
@@ -95,12 +106,13 @@ sweep never deletes things that would make you set up a project again, like
 
 ## Safety
 
-- sweep asks before deleting anything, unless you pass `-y`.
+- sweep asks before moving anything, unless you pass `-y`.
+- It never deletes: folders go to the Trash, so you can get one back.
 - It only deletes folders with the names above, never your code.
 - It won't run in your home folder, `~/Library`, system folders, or with
   `sudo`.
-- It doesn't follow symlinks, never touches `.git` folders or apps, and
-  stays on your Mac's drive.
+- It doesn't follow symlinks, never touches `.git` folders, apps or the
+  Trash, and stays on your Mac's drive.
 
 To keep sweep out of a folder, put an empty `.sweepignore` file in it.
 
@@ -138,7 +150,8 @@ rm "$(which sweep)" && rm -rf ~/.local/state/sweep   # uninstall
 <details>
 <summary>Why the freed space can look smaller than shown</summary>
 
-Sizes are real disk usage. With pnpm, the space you get back can be smaller,
+Sizes are real disk usage. The space comes back when you empty the Trash.
+With pnpm, the space you get back can be smaller,
 because pnpm keeps one shared copy of every package. On a Mac with Time
 Machine snapshots, freed space can also show up a little later.
 

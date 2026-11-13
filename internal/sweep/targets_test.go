@@ -54,6 +54,8 @@ func TestBadUserList(t *testing.T) {
 		".git":               "never swept",
 		"Foo.APP":            "never swept",
 		"x/.git":             "never swept",
+		".Trash":             "never swept",
+		".Trashes":           "never swept",
 		"*.cache":            "wildcards",
 		"**/dist":            "wildcards",
 		"[default]":          "wildcards",

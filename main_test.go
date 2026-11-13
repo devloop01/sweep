@@ -4,12 +4,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -69,7 +71,7 @@ func TestPromptDeclined(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := fixture(t)
 			code, out, _ := sweepIn(t, tc.stdin, tc.tty, root)
-			if code != 0 || !strings.Contains(out, "Delete all of these? [y/N] ") || !strings.Contains(out, "Cancelled.") {
+			if code != 0 || !strings.Contains(out, "Move all of these to the Trash? [y/N] ") || !strings.Contains(out, "Cancelled.") {
 				t.Errorf("code %d, out:\n%s", code, out)
 			}
 			if n := targetsLeft(root); n != 3 {
@@ -83,7 +85,7 @@ func TestPromptAccepted(t *testing.T) {
 	for _, answer := range []string{"y\n", "Y\n", "yes\n", " YES \n"} {
 		root := fixture(t)
 		code, out, _ := sweepIn(t, answer, true, root)
-		if code != 0 || !strings.Contains(out, "Deleted 3 folders, freed about ") {
+		if code != 0 || !strings.Contains(out, "Moved 3 folders to the Trash, about") {
 			t.Errorf("%q: code %d, out:\n%s", answer, code, out)
 		}
 		if n := targetsLeft(root); n != 0 {
@@ -129,7 +131,7 @@ c/\.svelte-kit +today +\d+\.\d KB
 e/weird\?name/node_modules +today +\d+\.\d KB
 -+
 3 folders · \d+\.\d [KMGT]B free +\d+\.\d KB
-Dry run: nothing deleted\.
+Dry run: nothing moved\.
 $`)
 	if !want.MatchString(out) {
 		t.Errorf("out:\n%s", out)
@@ -166,14 +168,86 @@ func TestRefusedRoot(t *testing.T) {
 	}
 }
 
-func TestDeleteFailure(t *testing.T) {
+func TestTrashFailure(t *testing.T) {
 	root := fixture(t)
-	locked := filepath.Join(root, "a/node_modules/pkg")
-	os.Chmod(locked, 0o500)
-	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	a := filepath.Join(root, "a") // a/node_modules can't leave a
+	os.Chmod(a, 0o500)
+	t.Cleanup(func() { os.Chmod(a, 0o755) })
 	code, out, errOut := sweepIn(t, "", false, "-y", root)
-	if code != 1 || !strings.Contains(out, "Deleted 2 of 3 folders, freed about ") || !strings.Contains(errOut, "permission denied") {
+	if code != 1 || !strings.Contains(out, "Moved 2 of 3 folders to the Trash, about ") || !strings.Contains(errOut, "permission denied") {
 		t.Errorf("code %d, out:\n%s\nstderr:\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a/node_modules/pkg/f")); err != nil {
+		t.Error("lost a file of the folder that couldn't be moved")
+	}
+}
+
+// useTrash gives the test its own empty Trash and returns it.
+func useTrash(t *testing.T) string {
+	t.Helper()
+	trash, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	was := findTrash
+	findTrash = func(string) (string, error) { return trash, nil }
+	t.Cleanup(func() { findTrash = was })
+	return trash
+}
+
+// TestMain points the Trash at a temporary folder, so no test ever puts
+// anything in the real one.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "sweep-trash")
+	if err == nil {
+		dir, err = filepath.EvalSymlinks(dir)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	findTrash = func(string) (string, error) { return dir, nil }
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
+// Folders go to the Trash, whole, under names that say where they came
+// from.
+func TestTrash(t *testing.T) {
+	trash := useTrash(t)
+	root := fixture(t)
+	code, out, _ := sweepIn(t, "", false, "-y", root)
+	if code != 0 || targetsLeft(root) != 0 || !strings.Contains(out, "Moved 3 folders to the Trash, about") || !strings.Contains(out, emptyHint) {
+		t.Fatalf("code %d, left %d, out:\n%s", code, targetsLeft(root), out)
+	}
+	var names []string
+	entries, _ := os.ReadDir(trash)
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	top := filepath.Base(root)
+	if want := []string{top + " › a › node_modules", top + " › c › .svelte-kit", top + " › e › weird\nname › node_modules"}; !slices.Equal(names, want) {
+		t.Errorf("Trash holds %q, want %q", names, want)
+	}
+	if _, err := os.Stat(filepath.Join(trash, top+" › a › node_modules/pkg/f")); err != nil {
+		t.Error("a moved folder lost its files")
+	}
+}
+
+// Without a usable Trash sweep stops before scanning, unless it won't need
+// one: a dry run.
+func TestNoTrash(t *testing.T) {
+	was := findTrash
+	findTrash = func(string) (string, error) { return "", errors.New("no Trash on this disk") }
+	t.Cleanup(func() { findTrash = was })
+	root := fixture(t)
+	code, out, errOut := sweepIn(t, "y\n", true, root)
+	if code != 1 || targetsLeft(root) != 3 || strings.Contains(out, "Scanning") || !strings.Contains(errOut, "no Trash on this disk") {
+		t.Errorf("code %d, left %d, out:\n%s\nstderr:\n%s", code, targetsLeft(root), out, errOut)
+	}
+	if code, _, _ := sweepIn(t, "", false, "-n", root); code != 0 {
+		t.Errorf("dry run: code %d", code)
 	}
 }
 
@@ -288,7 +362,7 @@ func TestUserConfig(t *testing.T) {
 	code := run([]string{"--yes", root}, env{
 		configPath: cfg, homes: []string{t.TempDir()}, stdout: &o, stderr: &e, workers: 4,
 	})
-	if code != 0 || !strings.Contains(o.String(), "Using targets from "+cfg) || !strings.Contains(o.String(), "Deleted 3 folders, ") {
+	if code != 0 || !strings.Contains(o.String(), "Using targets from "+cfg) || !strings.Contains(o.String(), "Moved 3 folders to the Trash, ") {
 		t.Errorf("code %d, out:\n%s\nstderr:\n%s", code, o.String(), e.String())
 	}
 	if _, err := os.Stat(filepath.Join(root, "a/.cache")); err == nil {
@@ -362,7 +436,7 @@ func TestKeptFoldersAreReported(t *testing.T) {
 		}
 	}
 	code, out, _ := sweepIn(t, "", false, "-y", root)
-	if code != 0 || !strings.Contains(out, "Skipped 1 folder that may hold your files") || strings.Contains(out, "p/dist") || !strings.Contains(out, "Deleted 3 folders") {
+	if code != 0 || !strings.Contains(out, "Skipped 1 folder that may hold your files") || strings.Contains(out, "p/dist") || !strings.Contains(out, "Moved 3 folders to the Trash") {
 		t.Errorf("code %d, out:\n%s", code, out)
 	}
 	if _, err := os.Stat(filepath.Join(root, "p/dist/app.js")); err != nil {
@@ -402,7 +476,7 @@ func TestSmallFoldersFoldInLongLists(t *testing.T) {
 	code, out, _ := sweepIn(t, "", false, "-y", root)
 	if code != 0 || !strings.Contains(out, "big/node_modules") || strings.Contains(out, "p00/.turbo") ||
 		!strings.Contains(out, "+ 22 small folders (under 1 MB each)") || !strings.Contains(out, "23 folders · ") ||
-		!strings.Contains(out, "Deleted 23 folders") {
+		!strings.Contains(out, "Moved 23 folders to the Trash") {
 		t.Errorf("code %d, out:\n%s", code, out)
 	}
 	if entries, _ := os.ReadDir(filepath.Join(root, "p00")); len(entries) != 0 {
