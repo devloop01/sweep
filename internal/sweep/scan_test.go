@@ -357,7 +357,7 @@ func TestScanStaysOnVolume(t *testing.T) {
 		t.Error("Vet allowed a folder on another volume")
 	}
 	r := open(t, root)
-	Remove(r, tg, append(cands, At(filepath.Join(share, "proj/node_modules"))), 4)
+	Remove(r, tg, append(cands, at(t, filepath.Join(share, "proj/node_modules"))), 4)
 	for _, p := range []string{"share/proj/node_modules/f", "b/node_modules/f"} {
 		if !exists(filepath.Join(root, p)) {
 			t.Errorf("%s was deleted", p)
@@ -395,5 +395,50 @@ func TestOnFoundReportsEachFolder(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(seen, want) || len(seen) != 2 {
 		t.Errorf("OnFound saw %q, Scan returned %q", seen, want)
+	}
+}
+
+// A volume mounted inside a listed folder after the scan is not emptied.
+func TestRemoveRefusesFolderMountedIntoSinceScan(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/f", "root/b/node_modules/f")
+	tg := DefaultTargets()
+	cands := scanned(root, tg, 4)
+	if len(cands) != 2 {
+		t.Fatalf("listed %+v, want both", cands)
+	}
+	inner := filepath.Join(root, "b/node_modules/inner")
+	mount(t, inner)
+	must(t, os.WriteFile(filepath.Join(inner, "precious"), []byte("on the volume"), 0o644))
+
+	deleted, errs := Remove(open(t, root), tg, cands, 4)
+	if len(deleted) != 1 || deleted[0].Path != filepath.Join(root, "a/node_modules") || len(errs) != 0 {
+		t.Errorf("deleted %+v (errors %v), want only a/node_modules", deleted, errs)
+	}
+	for _, p := range []string{"b/node_modules/f", "b/node_modules/inner/precious"} {
+		if !exists(filepath.Join(root, p)) {
+			t.Errorf("%s was deleted", p)
+		}
+	}
+}
+
+func TestMountedInside(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/pkg/f")
+	p := filepath.Join(root, "a/node_modules")
+	fi, err := os.Lstat(p)
+	must(t, err)
+	if mountedInside(p, dev(fi)) {
+		t.Error("a plain folder counts as mounted into")
+	}
+	if !mountedInside(p, dev(fi)+1) {
+		t.Error("files on another device weren't noticed")
+	}
+}
+
+// A target that's gone by the time it's measured isn't listed: Remove
+// could never delete it.
+func TestMeasureOfMissingFolderHasNoIdentity(t *testing.T) {
+	_, root := build(t, "root/a/")
+	if m := measure(filepath.Join(root, "a/node_modules"), nil); m.fi != nil {
+		t.Errorf("measured a missing folder: %+v", m)
 	}
 }

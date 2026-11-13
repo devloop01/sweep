@@ -49,16 +49,6 @@ type Candidate struct {
 	fi os.FileInfo // the folder the scan saw; Remove deletes only that one
 }
 
-// At returns a Candidate for the folder at path as it is now, unmeasured.
-// Remove runs every check on it all the same; tests use it to aim Remove at
-// folders Scan would never list, so they reach Vet rather than being refused
-// for not coming from a scan.
-func At(path string) Candidate {
-	c := Candidate{Path: path}
-	c.fi, _ = os.Lstat(path)
-	return c
-}
-
 // Scan finds the target folders under root, which must already be resolved
 // and passed by CheckRoot. Targets that may hold real files (see keep) are
 // not candidates; their paths are returned as kept. It never follows symlinks, never enters .git or
@@ -72,7 +62,7 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 	if err != nil {
 		return nil, nil
 	}
-	found := make(chan string)
+	found := make(chan []string) // the matches in one folder
 	go func() {
 		find(root, dev(fi), t, workers, found, progress)
 		close(found)
@@ -81,21 +71,39 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 	var (
 		mu      sync.Mutex
 		results []measured
+		vetting sync.WaitGroup
 		wg      sync.WaitGroup
 	)
+	// One folder's matches are vetted together (one question to git for all
+	// of them), then measured one by one, by whichever workers are free.
+	vetted := make(chan string)
+	for range workers {
+		vetting.Go(func() {
+			for ps := range found {
+				ps = slices.DeleteFunc(ps, func(p string) bool { return !vetPath(root, p, t) })
+				for i, k := range keepAll(ps) {
+					if k {
+						mu.Lock()
+						kept = append(kept, ps[i])
+						mu.Unlock()
+						continue
+					}
+					vetted <- ps[i]
+				}
+			}
+		})
+	}
+	go func() {
+		vetting.Wait()
+		close(vetted)
+	}()
 	for range workers {
 		wg.Go(func() {
-			for p := range found {
-				if !vetPath(root, p, t) {
-					continue
-				}
-				if keep(p) {
-					mu.Lock()
-					kept = append(kept, p)
-					mu.Unlock()
-					continue
-				}
+			for p := range vetted {
 				m := measure(p, progress)
+				if m.fi == nil {
+					continue // gone or unreadable since it was found: Remove would refuse it
+				}
 				if m.otherFS {
 					continue // a mount inside the target: deleting would reach into it
 				}
@@ -136,11 +144,12 @@ func Scan(root string, t Targets, workers int, progress *Progress) (cands []Cand
 	return cands, kept
 }
 
-// find walks root and sends every folder that matches a target. A subfolder
+// find walks root and sends the folders that match a target, a folder's
+// matches together. A subfolder
 // gets its own goroutine while one of the workers slots is free, otherwise
 // it's walked inline, so there are at most workers+1 walkers and nothing
 // ever waits for a slot.
-func find(root string, rootDev uint64, t Targets, workers int, found chan<- string, progress *Progress) {
+func find(root string, rootDev uint64, t Targets, workers int, found chan<- []string, progress *Progress) {
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var walk func(dir string)
@@ -156,6 +165,7 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- stri
 		if slices.ContainsFunc(entries, func(e os.DirEntry) bool { return e.Name() == IgnoreFile }) {
 			return // the user marked this folder: never look inside
 		}
+		var matches []string
 		for _, e := range entries {
 			// DirEntry types come from lstat: a symlink to a folder is not a dir here.
 			if !e.IsDir() || e.Name() == ".git" || isApp(e.Name()) {
@@ -166,7 +176,7 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- stri
 			}
 			p := filepath.Join(dir, e.Name())
 			if t.Match(p) {
-				found <- p
+				matches = append(matches, p)
 				continue // prune: never look inside a match
 			}
 			select {
@@ -178,6 +188,9 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- stri
 			default:
 				walk(p)
 			}
+		}
+		if len(matches) > 0 {
+			found <- matches
 		}
 	}
 	walk(root)
@@ -285,4 +298,21 @@ func measure(p string, progress *Progress) measured {
 		return nil
 	})
 	return m
+}
+
+// mountedInside reports whether anything under p, a folder on device pDev,
+// is on another volume.
+func mountedInside(p string, pDev uint64) bool {
+	other := false
+	filepath.WalkDir(p, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // what can't be read can't be deleted either
+		}
+		if info, err := d.Info(); err == nil && dev(info) != pDev {
+			other = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return other
 }

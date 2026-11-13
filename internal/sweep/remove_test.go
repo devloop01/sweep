@@ -79,9 +79,30 @@ func TestRemoveRevetsSymlinkedParent(t *testing.T) {
 func TestRemoveRefusesOutsideRoot(t *testing.T) {
 	tmp, root := build(t, "outside/node_modules/precious", "root/x/")
 	out := filepath.Join(tmp, "outside/node_modules")
-	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{At(out), At(root)}, 4)
+	tg := DefaultTargets()
+	for _, p := range []string{out, root} {
+		if Vet(root, p, tg) {
+			t.Errorf("Vet allowed %s", p)
+		}
+	}
+	deleted, _ := Remove(open(t, root), tg, []Candidate{at(t, out), at(t, root)}, 4)
 	if len(deleted) != 0 || !exists(out) || !exists(root) {
 		t.Errorf("deleted %v", deleted)
+	}
+}
+
+// A candidate that didn't come from Scan has no scanned folder to compare
+// with, so it's refused even when its path passes Vet.
+func TestRemoveRefusesCandidateNotFromScan(t *testing.T) {
+	_, root := build(t, "root/a/node_modules/f")
+	p := filepath.Join(root, "a/node_modules")
+	tg := DefaultTargets()
+	if !Vet(root, p, tg) {
+		t.Fatal("Vet refused a plain node_modules; the test proves nothing")
+	}
+	deleted, errs := Remove(open(t, root), tg, []Candidate{{Path: p}}, 4)
+	if len(deleted) != 0 || len(errs) != 0 || !exists(filepath.Join(p, "f")) {
+		t.Errorf("deleted %v (errors %v)", deleted, errs)
 	}
 }
 
@@ -102,6 +123,19 @@ func TestRemoveReportsFailures(t *testing.T) {
 	if !exists(filepath.Join(locked, "f")) {
 		t.Error("locked file was deleted")
 	}
+}
+
+// at returns a Candidate carrying the identity of the folder at path, as if
+// Scan had listed it, so Remove gets past "not from Scan" and its other
+// checks are what must refuse. Only tests can make one: outside them, a
+// Candidate Remove accepts has been through all of Scan's checks.
+func at(t *testing.T, path string) Candidate {
+	t.Helper()
+	fi, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Candidate{Path: path, fi: fi}
 }
 
 func open(t *testing.T, root string) *os.Root {

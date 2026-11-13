@@ -103,6 +103,17 @@ func TestYesSkipsPrompt(t *testing.T) {
 	}
 }
 
+// An empty DIR (a script's unset variable) is an error, not the current
+// folder.
+func TestEmptyDirIsRefused(t *testing.T) {
+	root := fixture(t)
+	t.Chdir(root)
+	code, out, errOut := sweepIn(t, "", false, "--yes", "")
+	if code != 1 || !strings.Contains(errOut, "DIR is empty") || targetsLeft(root) != 3 {
+		t.Errorf("code %d, left %d, out:\n%s\nerr:\n%s", code, targetsLeft(root), out, errOut)
+	}
+}
+
 func TestDryRun(t *testing.T) {
 	root := fixture(t)
 	code, out, _ := sweepIn(t, "y\n", true, root, "-n") // flag after DIR

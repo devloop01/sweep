@@ -52,7 +52,8 @@ func status(dirs int64, current string, width int) string {
 	path := []rune(printable(current))
 	switch {
 	case room < 8:
-		return s[:min(len(s), max(width-1, 0))]
+		r := []rune(s) // not bytes: that could cut the … in half
+		return string(r[:min(len(r), max(width-1, 0))])
 	case len(path) > room:
 		// ponytail: counts runes, not columns; wide (CJK) names can still wrap.
 		path = append([]rune("…"), path[len(path)-room+1:]...)
@@ -111,7 +112,10 @@ func colorOK(isTerminal bool, getenv func(string) string) bool {
 	return isTerminal && getenv("NO_COLOR") == "" && getenv("TERM") != "dumb"
 }
 
+// isTerminal asks the device for its terminal settings, like isatty: being
+// a character device isn't enough, /dev/null is one too.
 func isTerminal(f *os.File) bool {
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	var t syscall.Termios
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, f.Fd(), syscall.TIOCGETA, uintptr(unsafe.Pointer(&t)))
+	return errno == 0
 }

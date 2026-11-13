@@ -106,7 +106,7 @@ func main() {
 	// Look for a newer release while sweep runs; say so at the end if the
 	// answer is in by then. Never waits, and only for a person at a terminal.
 	notice := make(chan string, 1)
-	if version != "dev" && isTerminal(os.Stderr) {
+	if _, release := numbers(version); release && isTerminal(os.Stderr) {
 		go func() {
 			if tag, err := latest(repoURL); err == nil && newer(tag, version) {
 				notice <- fmt.Sprintf("sweep %s is out (you have %s). Run sweep upgrade to update.", tag, version)

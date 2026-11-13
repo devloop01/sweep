@@ -98,6 +98,10 @@ func TestResolveAndCheck(t *testing.T) {
 	if _, err := Resolve(filepath.Join(tmp, "missing")); err == nil {
 		t.Error("Resolve of missing dir succeeded")
 	}
+	// Not the current folder: it's what a script's unset variable gives.
+	if r, err := Resolve(""); err == nil {
+		t.Errorf("Resolve of an empty dir gave %s", r)
+	}
 	file := filepath.Join(tmp, "file")
 	os.WriteFile(file, nil, 0o644)
 	if _, err := Resolve(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
