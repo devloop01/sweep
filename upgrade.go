@@ -45,14 +45,21 @@ func latest(base string) (string, error) {
 	return tag, nil
 }
 
-// newer reports whether version a is newer than b, comparing the numbers in
-// vX.Y.Z. Anything after them (v0.6.0-2-g386b6ed from make, a go install
-// pseudo-version) is ignored.
+// numbers reads X, Y and Z from a version that starts with vX.Y.Z. Anything
+// after them (v0.6.0-2-g386b6ed from make, a go install pseudo-version) is
+// ignored. ok is false for a version with no such numbers: "dev", or the
+// bare commit hash make uses in a clone without tags.
+func numbers(v string) (n [3]int, ok bool) {
+	got, _ := fmt.Sscanf(v, "v%d.%d.%d", &n[0], &n[1], &n[2])
+	return n, got == 3
+}
+
+// newer reports whether version a is newer than b, comparing their numbers.
+// A version without numbers is neither newer nor older than anything.
 func newer(a, b string) bool {
-	var x, y [3]int
-	fmt.Sscanf(a, "v%d.%d.%d", &x[0], &x[1], &x[2])
-	fmt.Sscanf(b, "v%d.%d.%d", &y[0], &y[1], &y[2])
-	return slices.Compare(x[:], y[:]) > 0
+	x, okA := numbers(a)
+	y, okB := numbers(b)
+	return okA && okB && slices.Compare(x[:], y[:]) > 0
 }
 
 // upgrade replaces the binary at exe with the latest release, if it's newer
@@ -61,7 +68,7 @@ func newer(a, b string) bool {
 // untouched. (Renaming, not overwriting in place: macOS kills a signed
 // binary whose file was rewritten.)
 func upgrade(base, exe, current string, out io.Writer) error {
-	if current == "dev" {
+	if _, ok := numbers(current); !ok { // "dev", or a commit hash: can't be compared with a release
 		return fmt.Errorf("this is a development build; install a release with:\n  curl -fsSL https://raw.githubusercontent.com/devloop01/sweep/main/install.sh | sh")
 	}
 	tag, err := latest(base)

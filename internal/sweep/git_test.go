@@ -160,3 +160,88 @@ func TestWithoutGitFoldersInRepoAreKept(t *testing.T) {
 		t.Errorf("kept %q, want proj/node_modules", kept)
 	}
 }
+
+// Git sets GIT_DIR and GIT_INDEX_FILE for hooks and rebase --exec, and some
+// shells export them for a dotfiles repo. sweep still asks the repo each
+// folder is in, not that one.
+func TestGitEnvironmentDoesNotRedirect(t *testing.T) {
+	tmp, root := build(t, "other/README", "root/proj/node_modules/pkg/f", "root/proj/.output/f",
+		"root/proj/dist/app.js", "root/proj/.gitignore")
+	proj := filepath.Join(root, "proj")
+	must(t, os.WriteFile(filepath.Join(proj, ".gitignore"), []byte("dist/\n"), 0o644))
+	gitRepo(t, proj, "node_modules/pkg/f", ".gitignore")
+	other := filepath.Join(tmp, "other")
+	gitRepo(t, other, "README")
+	t.Setenv("GIT_DIR", filepath.Join(other, ".git"))
+	t.Setenv("GIT_WORK_TREE", other)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(other, ".git/index"))
+
+	tg := DefaultTargets()
+	cands, kept := Scan(root, tg, 4, nil)
+	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/proj/.output", "root/proj/dist"}) {
+		t.Errorf("listed %q, want .output and dist", got)
+	}
+	if got := keptPaths(t, root, kept); !slices.Equal(got, []string{"proj/node_modules"}) {
+		t.Errorf("kept %q, want the tracked proj/node_modules", got)
+	}
+	if Vet(root, filepath.Join(proj, "node_modules"), tg) {
+		t.Error("Vet allowed a folder with tracked files")
+	}
+}
+
+// A target with its own .git is a checkout of its own (a nested clone, a
+// worktree), whatever the repo around it ignores, and whether .git is a
+// folder or a worktree's file.
+func TestNestedCheckoutIsKept(t *testing.T) {
+	tmp, root := build(t, "root/proj/README", "root/proj/.gitignore", "root/proj/build/main.go",
+		"root/proj/out/main.go", "root/proj/dist/app.js", "root/plain/node_modules/.git/HEAD")
+	proj := filepath.Join(root, "proj")
+	must(t, os.WriteFile(filepath.Join(proj, ".gitignore"), []byte("build/\nout/\ndist/\n"), 0o644))
+	gitRepo(t, proj, "README", ".gitignore")
+	gitRepo(t, filepath.Join(proj, "build"), "main.go")
+	must(t, os.WriteFile(filepath.Join(proj, "out/.git"), []byte("gitdir: ../.git/worktrees/out\n"), 0o644))
+
+	tg := DefaultTargets()
+	cands, kept := Scan(root, tg, 4, nil)
+	if got := rels(t, tmp, cands); !slices.Equal(got, []string{"root/proj/dist"}) {
+		t.Errorf("listed %q, want only dist", got)
+	}
+	if got := keptPaths(t, root, kept); !slices.Equal(got, []string{"plain/node_modules", "proj/build", "proj/out"}) {
+		t.Errorf("kept %q", got)
+	}
+	// A .git that appears after the scan protects the folder too.
+	must(t, os.WriteFile(filepath.Join(proj, "dist/.git"), []byte("gitdir: elsewhere\n"), 0o644))
+	if deleted, _ := Remove(open(t, root), tg, cands, 4); len(deleted) != 0 || !exists(filepath.Join(proj, "dist/app.js")) {
+		t.Errorf("deleted %v, a folder with its own .git", deleted)
+	}
+}
+
+// Targets in one folder are put to git together; each still gets its own
+// answer, the same one it gets alone.
+func TestKeepAllAnswersEachFolder(t *testing.T) {
+	_, root := build(t, "root/proj/README", "root/proj/.gitignore", "root/proj/node_modules/f",
+		"root/proj/.next/f", "root/proj/.turbo/tracked", "root/proj/dist/f", "root/proj/build/f",
+		"root/proj/out/tracked", "root/proj/target/f")
+	proj := filepath.Join(root, "proj")
+	must(t, os.WriteFile(filepath.Join(proj, ".gitignore"), []byte("dist/\nout/\n/target\n!/target\n"), 0o644))
+	gitRepo(t, proj, "-f", "README", ".gitignore", ".turbo/tracked", "out/tracked")
+
+	names := []string{"node_modules", ".next", ".turbo", "dist", "build", "out", "target"}
+	want := []bool{false, false, true, false, true, true, true}
+	var dirs []string
+	for _, n := range names {
+		dirs = append(dirs, filepath.Join(proj, n))
+	}
+	got := keepAll(dirs)
+	for i, n := range names {
+		if got[i] != want[i] {
+			t.Errorf("keepAll: %s kept %v, want %v", n, got[i], want[i])
+		}
+		if alone := keep(dirs[i]); alone != want[i] {
+			t.Errorf("keep(%s) = %v, want %v", n, alone, want[i])
+		}
+	}
+	if len(keepAll(nil)) != 0 {
+		t.Error("keepAll(nil) isn't empty")
+	}
+}

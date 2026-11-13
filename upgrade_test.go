@@ -25,6 +25,8 @@ func TestNewer(t *testing.T) {
 		{"v0.6.0", "v0.6.0-2-g386b6ed", false},               // make build after the tag
 		{"v0.6.0", "v0.6.1-0.20261103162539-386b6ed", false}, // go install pseudo-version
 		{"v0.5.0", "v0.6.0", false},
+		{"v0.7.0", "1be5122", false}, // make build in a clone without tags: not a release to compare
+		{"v0.7.0", "dev", false},
 	} {
 		if got := newer(c.a, c.b); got != c.want {
 			t.Errorf("newer(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
@@ -62,6 +64,7 @@ func TestUpgrade(t *testing.T) {
 		{"replaces the binary", hex.EncodeToString(good[:]), "v0.6.0", true},
 		{"bad checksum changes nothing", hex.EncodeToString(make([]byte, 32)), "v0.6.0", false},
 		{"up to date changes nothing", hex.EncodeToString(good[:]), "v9.9.9", false},
+		{"a build without a version is left alone", hex.EncodeToString(good[:]), "1be5122", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			exe := filepath.Join(t.TempDir(), "sweep")

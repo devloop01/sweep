@@ -41,7 +41,8 @@ var beforeRemove = func(path string) {}
 // folder, which is refused. ponytail: what's left is a different folder
 // swapped into the target's exact place between that check and the delete;
 // renaming it aside first and checking again would close that. Candidates
-// not from Scan (no scanned folder to compare) are refused.
+// not from Scan (no scanned folder to compare) are refused, and so is a
+// folder with another volume mounted inside it since the scan.
 func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Candidate, errs []error) {
 	root := r.Name()
 	done := make([]bool, len(cands))
@@ -67,6 +68,11 @@ func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Ca
 			defer parent.Close()
 			name := filepath.Base(rel)
 			if fi, err := parent.Lstat(name); err != nil || !fi.IsDir() || !os.SameFile(fi, c.fi) {
+				return
+			}
+			// The scan dropped targets with a volume mounted inside; one
+			// mounted since (a disk image, a share) must not be emptied either.
+			if mountedInside(c.Path, dev(c.fi)) {
 				return
 			}
 			if err := parent.RemoveAll(name); err != nil {

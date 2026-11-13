@@ -4,6 +4,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -11,10 +12,13 @@ import (
 
 func TestStatusFitsWidth(t *testing.T) {
 	long := strings.Repeat("deep/", 40) + "node_modules"
-	for _, width := range []int{120, 80, 40, 20, 5, 0} {
+	for width := range 121 {
 		s := status(1234, long, width)
 		if n := utf8.RuneCountInString(s); n > max(width-1, 0) {
 			t.Errorf("width %d: %d runes: %q", width, n, s)
+		}
+		if !utf8.ValidString(s) {
+			t.Errorf("width %d: cut inside a character: %q", width, s)
 		}
 	}
 	if s := status(7, "web/app", 80); s != "Scanning… 7 folders  web/app" {
@@ -86,5 +90,18 @@ func TestLiveStatusIsErased(t *testing.T) {
 	}
 	if strings.Contains(o.String(), "\x1b[") || strings.Contains(o.String(), "Scanning…") {
 		t.Errorf("status leaked into stdout:\n%q", o.String())
+	}
+}
+
+// /dev/null is a character device but not a terminal: sweep > /dev/null
+// must not open the interactive screen.
+func TestDevNullIsNotATerminal(t *testing.T) {
+	f, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if isTerminal(f) {
+		t.Error("/dev/null counts as a terminal")
 	}
 }

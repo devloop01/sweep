@@ -15,7 +15,13 @@ import (
 var SystemRoots = []string{"/System", "/Applications", "/Library", "/opt", "/usr", "/private"}
 
 // Resolve turns dir into an absolute, symlink-free path to an existing directory.
+//
+// An empty dir is refused, not read as the current folder: it's what a
+// script passes when its variable is unset.
 func Resolve(dir string) (string, error) {
+	if dir == "" {
+		return "", errors.New("DIR is empty")
+	}
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", err
