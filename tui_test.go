@@ -92,6 +92,44 @@ func newScreen(n int) *screen {
 	return s
 }
 
+// Moving to the Trash says so everywhere: the dialog, its button, the key
+// bar, the folder's status and the line under the list.
+func TestScreenTrash(t *testing.T) {
+	s := newScreen(3)
+	s.key("home") // a first d right as the scan fills the top row only pins the cursor
+	plain := func(w int) string { return escapes.ReplaceAllString(strings.Join(s.view(look{}, w, 24), "\n"), "") }
+	if bar := plain(80); !strings.Contains(bar, "d trash") || strings.Contains(bar, "delete") {
+		t.Errorf("key bar:\n%s", bar)
+	}
+	s.key("delete")
+	screen := plain(80)
+	for _, want := range []string{"Move p00/node_modules (3.1 MB) to Trash?", "Move to Trash", "y trash"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("no %q in:\n%s", want, screen)
+		}
+	}
+	for _, line := range strings.Split(plain(40), "\n") {
+		if ansi.StringWidth(line) > 39 {
+			t.Errorf("line wider than a 40-column terminal: %q", line)
+		}
+	}
+	plain(80)
+	del := s.click(s.drawn.del[0]+1, s.drawn.buttons)
+	if len(del) != 1 || del[0].Path != "/r/p00/node_modules" {
+		t.Fatalf("Move to Trash returned %v", del)
+	}
+	if screen := plain(80); !strings.Contains(screen, "moving") {
+		t.Errorf("no moving status:\n%s", screen)
+	}
+	s.done(del[0].Path, nil)
+	screen = plain(80)
+	for _, want := range []string{"✓ in Trash", "Moved 3.1 MB to the Trash · empty it to get the space back"} {
+		if !strings.Contains(screen, want) {
+			t.Errorf("no %q in:\n%s", want, screen)
+		}
+	}
+}
+
 func TestScreenKeys(t *testing.T) {
 	s := newScreen(5)
 	for _, k := range []string{"up", "down", "down", "end", "down", "home", "pgdn"} {
@@ -268,7 +306,7 @@ func TestScreenView(t *testing.T) {
 	// doesn't grow the frame.
 	s.ask = []string{s.items[3].cand.Path}
 	box := escapes.ReplaceAllString(strings.Join(s.view(look{}, 44, 24), "\n"), "")
-	if !strings.Contains(box, "Cancel ") || !strings.Contains(box, ")?") {
+	if !strings.Contains(box, "Cancel ") || !strings.Contains(box, ") to Trash?") {
 		t.Errorf("dialog cut off at 44 columns:\n%s", box)
 	}
 	if n := len(s.view(look{}, 44, 4)); n != 4 {
@@ -311,7 +349,7 @@ func TestScreenProjects(t *testing.T) {
 		t.Error("space again should unselect them")
 	}
 	s.key("delete")
-	if box := escapes.ReplaceAllString(strings.Join(s.view(look{}, 80, 24), "\n"), ""); !strings.Contains(box, "Delete 2 folders in mono (0.0 KB)?") {
+	if box := escapes.ReplaceAllString(strings.Join(s.view(look{}, 80, 24), "\n"), ""); !strings.Contains(box, "Move 2 folders in mono (0.0 KB) to Trash?") {
 		t.Errorf("dialog doesn't name the project:\n%s", box)
 	}
 	slices.Sort(s.ask)
@@ -525,18 +563,18 @@ func TestScreenClick(t *testing.T) {
 }
 
 // The dialog's buttons are found in the dialog, not the screen line: a path
-// beside the box that says "Delete" isn't a button.
+// beside the box that says "Move to Trash" isn't a button.
 func TestDialogButtonsIgnoreListText(t *testing.T) {
 	s := &screen{}
 	for i := range 30 {
-		path := fmt.Sprintf("p%02d/%s/Delete Later/node_modules", i, strings.Repeat("x", 90))
+		path := fmt.Sprintf("p%02d/%s/Move to Trash Later/node_modules", i, strings.Repeat("x", 90))
 		s.add(sweep.Candidate{Path: "/r/" + path, Size: int64(30-i) << 20}, path)
 	}
 	s.moved = true                                        // past the guard for a key right after the list changed
 	s.items[0].selected, s.items[1].selected = true, true // a short title, so a narrow box
 	s.key("delete")
 	plain := ansi.Strip(s.view(look{}, 160, 24)[s.drawn.buttons])
-	text := ansi.StringWidth(plain[:strings.LastIndex(plain, "Delete")])
+	text := ansi.StringWidth(plain[:strings.LastIndex(plain, "Move to Trash")])
 	if s.drawn.del[1] > text {
 		t.Fatalf("the list's Delete at %d isn't right of the button %v:\n%s", text, s.drawn.del, plain)
 	}
@@ -718,7 +756,7 @@ func TestInteractiveDeletesProject(t *testing.T) {
 			t.Errorf("%s deleted", kept)
 		}
 	}
-	if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Deleted 2 folders") {
+	if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Moved 2 folders to the Trash") {
 		t.Errorf("code %d, left %d, out:\n%q", code, targetsLeft(root), out)
 	}
 }
@@ -743,7 +781,7 @@ func TestInteractiveNothingToClean(t *testing.T) {
 // stays on whichever folder the scan found first.
 func TestInteractiveDeletesHighlighted(t *testing.T) {
 	root, code, out := keysThen(t, "gjdyq")
-	if code != 0 || !strings.Contains(out, "Deleted 1 folder, freed about") {
+	if code != 0 || !strings.Contains(out, "Moved 1 folder to the Trash, about") {
 		t.Errorf("code %d, out:\n%q", code, out)
 	}
 	if _, err := os.Stat(filepath.Join(root, "c/.svelte-kit")); err == nil {
@@ -752,7 +790,7 @@ func TestInteractiveDeletesHighlighted(t *testing.T) {
 	if targetsLeft(root) != 2 {
 		t.Errorf("%d targets left, want 2", targetsLeft(root))
 	}
-	before, _, _ := strings.Cut(out, "Deleted")
+	before, _, _ := strings.Cut(out, "Moved 1 folder")
 	if !strings.Contains(before, "\x1b[?1049h") || !strings.Contains(before, "\x1b[?1049l") || !strings.Contains(before, "\x1b[?25h") {
 		t.Errorf("alternate screen not entered and left before the summary: %q", out[max(len(out)-300, 0):])
 	}
@@ -764,23 +802,23 @@ func TestInteractiveDeletesHighlighted(t *testing.T) {
 func TestInteractiveHeldKeysDeleteNothing(t *testing.T) {
 	for _, held := range []string{"g\r\r\r\r\rq", "gdddddq", "gd\r\r\r\rq"} {
 		root, _, out := keysThen(t, held)
-		if targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
+		if targetsLeft(root) != 3 || !strings.Contains(out, "Nothing moved.") {
 			t.Errorf("%q: left %d, out:\n%q", held, targetsLeft(root), out)
 		}
 	}
 	root, _, out := keysThen(t, "gd\x1b[D\rq")
-	if targetsLeft(root) != 2 || !strings.Contains(out, "Deleted 1 folder,") {
+	if targetsLeft(root) != 2 || !strings.Contains(out, "Moved 1 folder to the Trash,") {
 		t.Errorf("left %d, out:\n%q", targetsLeft(root), out)
 	}
 }
 
 func TestInteractiveDeletesSelection(t *testing.T) {
 	root, _, out := keysThen(t, "g jj dyq") // select a and e/…, delete both
-	if _, err := os.Stat(filepath.Join(root, "c/.svelte-kit")); err != nil || targetsLeft(root) != 1 || !strings.Contains(out, "Deleted 2 folders,") {
+	if _, err := os.Stat(filepath.Join(root, "c/.svelte-kit")); err != nil || targetsLeft(root) != 1 || !strings.Contains(out, "Moved 2 folders to the Trash,") {
 		t.Errorf("left %d, out:\n%q", targetsLeft(root), out)
 	}
 	root, _, out = keysThen(t, "a\x7fyq") // everything, with ⌫
-	if targetsLeft(root) != 0 || !strings.Contains(out, "Deleted 3 folders,") {
+	if targetsLeft(root) != 0 || !strings.Contains(out, "Moved 3 folders to the Trash,") {
 		t.Errorf("select all: left %d, out:\n%q", targetsLeft(root), out)
 	}
 }
@@ -788,7 +826,7 @@ func TestInteractiveDeletesSelection(t *testing.T) {
 func TestInteractiveQuitDeletesNothing(t *testing.T) {
 	for _, input := range []string{"", "q", "\x03", "jjk\x1b", "g  a a q", "gdnq", "adn\x1b", "g\r\r\rq"} { // selecting alone deletes nothing
 		root, code, out := keysThen(t, input)
-		if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
+		if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Nothing moved.") {
 			t.Errorf("%q: code %d, left %d, out:\n%q", input, code, targetsLeft(root), out)
 		}
 	}

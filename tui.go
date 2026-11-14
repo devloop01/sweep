@@ -26,8 +26,9 @@ import (
 )
 
 // The interactive screen: it opens at once and fills in while the scan
-// runs. Move with the arrow keys, space or enter selects, d deletes the
-// selected folders (or the highlighted one) after asking, q quits. screen holds the list and its
+// runs. Move with the arrow keys, space or enter selects, d moves the
+// selected folders (or the highlighted one) to the Trash after asking, q
+// quits. screen holds the list and its
 // rules; Bubble Tea (model, below) runs it in the terminal.
 
 type state int
@@ -162,8 +163,11 @@ type screen struct {
 		at  time.Time
 	}
 	free int64 // free space on DIR's disk, 0 if unknown
-	yes  bool  // the dialog's Delete button has focus (Cancel does at first)
+	yes  bool  // the dialog's Move to Trash button has focus (Cancel does at first)
 }
+
+// moveButton is the label of the dialog's button that goes ahead.
+const moveButton = "Move to Trash"
 
 // add puts a folder the scan just found into the list, biggest first.
 func (s *screen) add(c sweep.Candidate, path string) { s.addIn(c, path, nil) }
@@ -675,12 +679,12 @@ func (s *screen) view(l look, w, h int) []string {
 		status, style := human(size), sizeLook(size)
 		switch {
 		case ndeleting > 0:
-			status, style = l.spin+" deleting", warn
+			status, style = l.spin+" moving", warn
 		case nready > 0:
 		case nfailed > 0:
 			status, style = "✗ failed", bad
 		default:
-			status, style = "✓ deleted", good
+			status, style = "✓ in Trash", good
 		}
 		var cells string
 		switch {
@@ -728,13 +732,13 @@ func (s *screen) view(l look, w, h int) []string {
 	}
 	switch {
 	case s.quitting && s.deletions > 0:
-		lines = append(lines, clip(" "+l.spin+" "+warn.Render("Finishing deletions…"), w-1))
+		lines = append(lines, clip(" "+l.spin+" "+warn.Render("Finishing moves to the Trash…"), w-1))
 	case s.message != "":
 		lines = append(lines, clip(" "+bad.Render(s.message), w-1))
 	case nsel > 0:
 		lines = append(lines, clip(" "+warn.Render("Selected "+folders(nsel)+", "+human(selSize)), w-1))
 	case s.freed > 0:
-		lines = append(lines, clip(" "+good.Render("Freed "+human(s.freed)), w-1))
+		lines = append(lines, clip(" "+good.Render("Moved "+human(s.freed)+" to the Trash")+faint.Render(" · empty it to get the space back"), w-1))
 	default:
 		lines = append(lines, "")
 	}
@@ -760,7 +764,7 @@ func (s *screen) view(l look, w, h int) []string {
 	}
 	// The buttons sit above the box's bottom padding and border. They're
 	// found in the box itself, not the screen line, where list text beside
-	// the box could also say "Delete".
+	// the box could also say "Delete" or "Move to Trash".
 	if y := by + bh - 3; s.ask != nil && y < min(len(lines), h) {
 		plain := ansi.Strip(strings.Split(box, "\n")[bh-3])
 		find := func(label string) [2]int {
@@ -771,7 +775,7 @@ func (s *screen) view(l look, w, h int) []string {
 			x := bx + ansi.StringWidth(plain[:i])
 			return [2]int{x - 2, x + len(label) + 2} // with the button's padding
 		}
-		s.drawn.buttons, s.drawn.del, s.drawn.can = y, find("Delete"), find("Cancel")
+		s.drawn.buttons, s.drawn.del, s.drawn.can = y, find(moveButton), find("Cancel")
 	}
 	return lines[:min(len(lines), max(h, 1))]
 }
@@ -799,12 +803,12 @@ func (s *screen) dialog(l look, w int) string {
 	what := folders(len(s.ask))
 	switch {
 	case len(s.ask) == 1:
-		// The box adds about 28 columns around the path.
-		what = fit(first.path, min(40, max(w-28, 8)))
+		// The box adds about 35 columns around the path.
+		what = fit(first.path, min(40, max(w-35, 8)))
 	case same:
-		what += " in " + fit(first.proj.name, min(30, max(w-40, 8)))
+		what += " in " + fit(first.proj.name, min(30, max(w-47, 8)))
 	}
-	title := "Delete " + what + " (" + human(size) + ")?"
+	title := "Move " + what + " (" + human(size) + ") to Trash?"
 	button := func(label string, focus bool) string {
 		st := lipgloss.NewStyle().Padding(0, 2).Foreground(lipgloss.LightDark(l.dark)(lipgloss.Color("#4A4A4A"), lipgloss.Color("#B2B2B2"))).
 			Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E4E4E4"), lipgloss.Color("#3A3A3A")))
@@ -816,7 +820,7 @@ func (s *screen) dialog(l look, w int) string {
 	body := lipgloss.JoinVertical(lipgloss.Center,
 		strong.Render(title),
 		"",
-		button("Delete", s.yes)+"  "+button("Cancel", !s.yes),
+		button(moveButton, s.yes)+"  "+button("Cancel", !s.yes),
 	)
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 3).Render(body)
 }
@@ -831,7 +835,7 @@ func keyList(l look) string {
 		{"space", "select a folder, or all of a project's"},
 		{"a", "select all, or none"},
 		{"enter", "select a folder, or collapse or open a project"},
-		{"d ⌫", "delete the selected folders, or the highlighted one"},
+		{"d ⌫", "move the selected folders, or the highlighted one, to the Trash"},
 		{"s", "sort by size, name, or last change"},
 		{"t", "group folders by project"},
 		{"← → h l", "collapse or open a project"},
@@ -856,7 +860,7 @@ func (s *screen) help(l look, w int) string {
 	hm.SetWidth(w - 1)
 	if s.ask != nil {
 		show := func(k, desc string) key.Binding { return key.NewBinding(key.WithKeys(k), key.WithHelp(k, desc)) }
-		return hm.ShortHelpView([]key.Binding{show("←→", "choose"), show("enter", "confirm"), show("y", "delete"), show("n", "cancel")})
+		return hm.ShortHelpView([]key.Binding{show("←→", "choose"), show("enter", "confirm"), show("y", "trash"), show("n", "cancel")})
 	}
 	canSelect := len(s.rows) > 0 && slices.ContainsFunc(s.under(), func(i int) bool { return s.items[i].state == ready })
 	nsel := 0
@@ -877,9 +881,9 @@ func (s *screen) help(l look, w int) string {
 		b.SetEnabled(on)
 		return b
 	}
-	delDesc := "delete"
+	delDesc := "trash"
 	if nsel > 0 {
-		delDesc = fmt.Sprintf("delete (%d)", nsel)
+		delDesc = fmt.Sprintf("trash (%d)", nsel)
 	}
 	// Kept to fit 80 columns; moving and the rest are in the ? list.
 	return clip(hm.ShortHelpView([]key.Binding{
@@ -900,9 +904,9 @@ type result struct {
 	free int64 // the disk's free space after it, read off the UI thread
 }
 
-// interactive scans root inside the screen, lets the user delete folders
-// until they quit, then prints what was deleted. It returns the exit code.
-func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
+// interactive scans root inside the screen, lets the user move folders to
+// trash until they quit, then prints what went. It returns the exit code.
+func interactive(e env, r *os.Root, t sweep.Targets, root, trash string) int {
 	s := &screen{scanning: true}
 	before := loadView(e.statePath, s)
 	defer func() {
@@ -910,7 +914,7 @@ func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
 			saveView(e.statePath, v)
 		}
 	}()
-	if err := runScreen(e, s, r, t, root); err != nil {
+	if err := runScreen(e, s, r, t, root, trash); err != nil {
 		fmt.Fprintln(e.stderr, "sweep:", err)
 		return 1
 	}
@@ -931,12 +935,15 @@ func interactive(e env, r *os.Root, t sweep.Targets, root string) int {
 	case len(s.items) == 0 && !s.scanning:
 		fmt.Fprintln(e.stdout, "Nothing to clean.")
 	case n == 0 && nfailed == 0:
-		fmt.Fprintln(e.stdout, "Nothing deleted.")
+		fmt.Fprintln(e.stdout, "Nothing moved.")
 	default:
-		fmt.Fprintln(e.stdout, e.paint(green, fmt.Sprintf("Deleted %s, freed about %s.", folders(n), human(s.freed))))
+		fmt.Fprintln(e.stdout, e.paint(green, summary(n, n, s.freed)))
+		if n > 0 {
+			fmt.Fprintln(e.stdout, emptyHint)
+		}
 	}
 	if nfailed > 0 {
-		fmt.Fprintf(e.stderr, "sweep: couldn't delete %s.\n", folders(nfailed))
+		fmt.Fprintf(e.stderr, "sweep: couldn't move %s to the Trash.\n", folders(nfailed))
 		return 1
 	}
 	return 0
@@ -1075,7 +1082,7 @@ func (m *model) View() tea.View {
 
 // runScreen scans in the background and runs the screen until the user
 // quits and the deletions they started have finished.
-func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error {
+func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root, trash string) error {
 	if e.flushInput != nil {
 		e.flushInput() // keys typed before the screen opened must not delete anything
 	}
@@ -1085,7 +1092,7 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root string) error
 	m := &model{s: s, e: e, w: w, h: h, dark: true, progress: &sweep.Progress{}, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent))), remove: func(c sweep.Candidate) result {
 		sem <- struct{}{}
 		defer func() { <-sem }()
-		deleted, errs := sweep.Remove(r, t, []sweep.Candidate{c}, 1)
+		deleted, errs := sweep.Remove(r, t, []sweep.Candidate{c}, 1, trash)
 		var err error
 		switch {
 		case len(errs) > 0:

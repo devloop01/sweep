@@ -29,21 +29,27 @@ func Open(root string) (*os.Root, error) {
 // beforeRemove lets tests change the tree between the last Vet and the delete.
 var beforeRemove = func(path string) {}
 
-// Remove deletes each candidate that still passes Vet, with up to workers
-// deletions at once. Candidates that no longer pass are dropped silently.
-// It returns the candidates actually deleted (in input order) and one error
-// per failed deletion.
+// Remove moves each candidate that still passes Vet into the Trash folder
+// trash (see FindTrash), with up to workers at once. sweep never deletes
+// anything itself. Candidates that no longer pass are dropped silently. It
+// returns the candidates actually moved (in input order) and one error per
+// failure.
 //
-// A folder can be swapped between Vet and the delete. So the delete opens
-// the target's parent (through r, so never outside root), holds it open, and
-// deletes the target only if it's the very folder the scan saw (same device
-// and inode). A symlink or rename anywhere on the path leads to some other
-// folder, which is refused. ponytail: what's left is a different folder
-// swapped into the target's exact place between that check and the delete;
-// renaming it aside first and checking again would close that. Candidates
-// not from Scan (no scanned folder to compare) are refused, and so is a
-// folder with another volume mounted inside it since the scan.
-func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Candidate, errs []error) {
+// A folder can be swapped between Vet and the move. So Remove opens the
+// target's parent (through r, so never outside root), holds it open, and
+// moves the target only if it's the very folder the scan saw
+// (same device and inode). A symlink or rename anywhere on the path leads
+// to some other folder, which is refused. ponytail: what's left is a
+// different folder swapped into the target's exact place between that
+// check and the move; renaming it aside first and checking again would
+// close that; such a folder still only ends up in the Trash.
+// Candidates not from Scan (no scanned folder to compare) are refused, and
+// so is a folder with another volume mounted inside it since the scan.
+//
+// Moving to the Trash is one rename on the same volume, so it's quick
+// however big the folder is, but it frees no space until the Trash is
+// emptied.
+func Remove(r *os.Root, t Targets, cands []Candidate, workers int, trash string) (deleted []Candidate, errs []error) {
 	root := r.Name()
 	done := make([]bool, len(cands))
 	failed := make([]error, len(cands))
@@ -75,7 +81,7 @@ func Remove(r *os.Root, t Targets, cands []Candidate, workers int) (deleted []Ca
 			if mountedInside(c.Path, dev(c.fi)) {
 				return
 			}
-			if err := parent.RemoveAll(name); err != nil {
+			if err := toTrash(parent, name, trash, root, rel); err != nil {
 				failed[i] = err
 				return
 			}

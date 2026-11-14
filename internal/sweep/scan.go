@@ -58,8 +58,8 @@ type Candidate struct {
 
 // Scan finds the target folders under root, which must already be resolved
 // and passed by CheckRoot. Targets that may hold real files (see keep) are
-// not candidates; their paths are returned as kept. It never follows symlinks, never enters .git or
-// *.app folders, never crosses onto another volume or mount (like
+// not candidates; their paths are returned as kept. It never follows symlinks, never enters .git,
+// *.app or Trash folders, never crosses onto another volume or mount (like
 // find -xdev), and does not look inside a match. Results are sorted by size
 // (biggest first), then path.
 // progress may be nil.
@@ -206,7 +206,7 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- []st
 		var matches []string
 		for _, e := range entries {
 			// DirEntry types come from lstat: a symlink to a folder is not a dir here.
-			if !e.IsDir() || e.Name() == ".git" || isApp(e.Name()) {
+			if !e.IsDir() || skipped(e.Name()) {
 				continue
 			}
 			if info, err := e.Info(); err != nil || dev(info) != rootDev {
@@ -235,11 +235,18 @@ func find(root string, rootDev uint64, t Targets, workers int, found chan<- []st
 	wg.Wait()
 }
 
+// skipped reports whether sweep never looks inside folders named name:
+// .git, *.app bundles, and Trash folders (a disk's .Trashes, ~/.Trash), so
+// what's already in the Trash is never listed again.
+func skipped(name string) bool {
+	return name == ".git" || isApp(name) || name == ".Trashes" || name == ".Trash"
+}
+
 // IgnoreFile marks a folder sweep must never look inside.
 const IgnoreFile = ".sweepignore"
 
 // Vet reports whether p is safe to delete right now: strictly inside root,
-// reached without passing through a symlink or a .git / *.app folder, not in
+// reached without passing through a symlink or a .git / *.app / Trash folder, not in
 // or under a folder marked with IgnoreFile, a real directory (not a symlink)
 // on the same volume as root, still a target, and not one to keep (see
 // keep).
@@ -255,7 +262,7 @@ func vetPath(root, p string, t Targets) bool {
 	}
 	dir := root
 	for _, c := range components(rel) {
-		if c == ".git" || isApp(c) {
+		if skipped(c) {
 			return false
 		}
 		dir = filepath.Join(dir, c)

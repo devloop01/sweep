@@ -93,8 +93,8 @@ func checkEntry(e string) error {
 		switch {
 		case p == "" || p == "." || p == "..":
 			return errors.New("isn't a folder name")
-		case p == ".git" || isApp(p):
-			return errors.New("is never swept: sweep doesn't enter .git or .app folders")
+		case skipped(p):
+			return errors.New("is never swept: sweep doesn't enter .git, .app or Trash folders")
 		case strings.ContainsAny(p, "*?[]{}\\"):
 			return errors.New("can't contain wildcards; list each folder name exactly")
 		case strings.ContainsFunc(p, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }):

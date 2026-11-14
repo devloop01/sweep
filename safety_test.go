@@ -159,6 +159,7 @@ func TestRandomUseDeletesOnlyWhatWasPicked(t *testing.T) {
 			}
 			defer r.Close()
 
+			trash, _ := filepath.EvalSymlinks(t.TempDir())
 			s := &screen{}
 			var finder sweep.Finder
 			for _, c := range cands {
@@ -205,7 +206,7 @@ func TestRandomUseDeletesOnlyWhatWasPicked(t *testing.T) {
 						t.Fatalf("deleting %s, which the dialog didn't ask about (%q)", c.Path, asked)
 					}
 				}
-				done, errs := sweep.Remove(r, tg, del, 4)
+				done, errs := sweep.Remove(r, tg, del, 4, trash)
 				if len(errs) > 0 {
 					t.Fatalf("delete failed: %v", errs)
 				}
@@ -244,6 +245,9 @@ func TestRandomUseDeletesOnlyWhatWasPicked(t *testing.T) {
 				if strings.HasPrefix(d, outside) || !slices.ContainsFunc(cands, func(c sweep.Candidate) bool { return c.Path == d }) {
 					t.Errorf("deleted %s, which the scan never listed", d)
 				}
+			}
+			if in, _ := os.ReadDir(trash); len(in) != len(deleted) {
+				t.Errorf("the Trash holds %d folders, want the %d moved", len(in), len(deleted))
 			}
 		})
 	}
@@ -284,8 +288,8 @@ func TestNastyTreeListsOnlySafeFolders(t *testing.T) {
 			t.Errorf("Vet allowed %s", c.Path)
 		}
 	}
-	if done, errs := sweep.Remove(r, tg, traps, 4); len(done) != 0 || len(errs) != 0 {
-		t.Errorf("Remove deleted %v (errors %v)", done, errs)
+	if done, errs := sweep.Remove(r, tg, traps, 4, t.TempDir()); len(done) != 0 || len(errs) != 0 {
+		t.Errorf("Remove moved %v (errors %v)", done, errs)
 	}
 	if after := snapshot(t, filepath.Dir(root)); len(after) != len(before) {
 		t.Errorf("the tree changed: %d entries -> %d", len(before), len(after))

@@ -10,9 +10,10 @@ Set Padding 16
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed 70ms
 
-# Fresh state (so the default view), a short prompt, and the demo folder.
+# Fresh state (so the default view), a home of its own (so its Trash is
+# demo/home/.Trash, not yours), a short prompt, and the demo folder.
 Hide
-Type "export XDG_STATE_HOME=$(mktemp -d) PATH=$PWD/demo/bin:$PATH PS1='$ ' && cd demo/projects && clear"
+Type "mkdir -p demo/home && export HOME=$PWD/demo/home XDG_STATE_HOME=$(mktemp -d) PATH=$PWD/demo/bin:$PATH PS1='$ ' && cd demo/projects && clear"
 Enter
 Show
 
@@ -52,7 +53,7 @@ Sleep 700ms
 Type "s"
 Sleep 1.5s
 
-# Delete the selection, through the confirm dialog.
+# Move the selection to the Trash, through the confirm dialog.
 Type "d"
 Sleep 1.5s
 Left

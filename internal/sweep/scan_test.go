@@ -56,6 +56,11 @@ var cases = []struct {
 		kept: []string{"root/My.app/Contents/node_modules/f", "root/Other.APP/node_modules/f"},
 	},
 	{
+		name: "the Trash is never entered",
+		tree: []string{"root/.Trashes/501/node_modules (web)/f", "root/.Trashes/501/node_modules/f", "root/p/.Trash/.next/f"},
+		kept: []string{"root/.Trashes/501/node_modules/f", "root/p/.Trash/.next/f"},
+	},
+	{
 		name: "deploy folders kept by default",
 		tree: []string{"root/a/.wrangler/state/db", "root/a/.vercel/project.json", "root/a/.netlify/state.json"},
 		kept: []string{"root/a/.wrangler/state/db", "root/a/.vercel/project.json", "root/a/.netlify/state.json"},
@@ -293,21 +298,24 @@ func TestVet(t *testing.T) {
 	tmp, root := build(t,
 		"root/a/node_modules/", "root/b/node_modules", "outside/node_modules/",
 		"root/g/.git/x/node_modules/", "root/X.app/node_modules/", "root/a/src/",
+		"root/.Trashes/501/node_modules/", "root/p/.Trash/node_modules/",
 		"root/l -> outside", "root/..x/node_modules/",
 	)
 	tg := DefaultTargets()
 	ok := map[string]bool{
-		"root/a/node_modules":          true,
-		"root":                         false, // DIR itself
-		"outside/node_modules":         false, // outside DIR
-		"root/../outside/node_modules": false,
-		"root/b/node_modules":          false, // a file
-		"root/g/.git/x/node_modules":   false,
-		"root/X.app/node_modules":      false,
-		"root/a/src":                   false, // not a target
-		"root/l/node_modules":          false, // through a symlinked parent
-		"root/a/missing/node_modules":  false,
-		"root/..x/node_modules":        false, // ponytail: rel starting with ".." is refused, even as a name
+		"root/a/node_modules":            true,
+		"root":                           false, // DIR itself
+		"outside/node_modules":           false, // outside DIR
+		"root/../outside/node_modules":   false,
+		"root/b/node_modules":            false, // a file
+		"root/g/.git/x/node_modules":     false,
+		"root/X.app/node_modules":        false,
+		"root/.Trashes/501/node_modules": false,
+		"root/p/.Trash/node_modules":     false,
+		"root/a/src":                     false, // not a target
+		"root/l/node_modules":            false, // through a symlinked parent
+		"root/a/missing/node_modules":    false,
+		"root/..x/node_modules":          false, // ponytail: rel starting with ".." is refused, even as a name
 	}
 	for rel, want := range ok {
 		if got := Vet(root, filepath.Join(tmp, rel), tg); got != want {
@@ -354,7 +362,7 @@ func TestScanStaysOnVolume(t *testing.T) {
 		t.Error("Vet allowed a folder on another volume")
 	}
 	r := open(t, root)
-	Remove(r, tg, append(cands, at(t, filepath.Join(share, "proj/node_modules"))), 4)
+	Remove(r, tg, append(cands, at(t, filepath.Join(share, "proj/node_modules"))), 4, newTrash(t))
 	for _, p := range []string{"share/proj/node_modules/f", "b/node_modules/f"} {
 		if !exists(filepath.Join(root, p)) {
 			t.Errorf("%s was deleted", p)
@@ -407,7 +415,7 @@ func TestRemoveRefusesFolderMountedIntoSinceScan(t *testing.T) {
 	mount(t, inner)
 	must(t, os.WriteFile(filepath.Join(inner, "precious"), []byte("on the volume"), 0o644))
 
-	deleted, errs := Remove(open(t, root), tg, cands, 4)
+	deleted, errs := Remove(open(t, root), tg, cands, 4, newTrash(t))
 	if len(deleted) != 1 || deleted[0].Path != filepath.Join(root, "a/node_modules") || len(errs) != 0 {
 		t.Errorf("deleted %+v (errors %v), want only a/node_modules", deleted, errs)
 	}

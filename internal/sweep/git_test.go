@@ -61,7 +61,7 @@ func TestGitTrackedTargetsAreKept(t *testing.T) {
 	if got := keptPaths(t, root, kept); !slices.Equal(got, []string{"proj/build", "proj/out"}) {
 		t.Errorf("kept %q, want proj/build and proj/out", got)
 	}
-	Remove(open(t, root), tg, cands, 4)
+	Remove(open(t, root), tg, cands, 4, newTrash(t))
 	if !exists(filepath.Join(proj, "build/tool.sh")) || exists(filepath.Join(proj, "dist")) {
 		t.Error("wrong folders deleted")
 	}
@@ -82,7 +82,7 @@ func TestBuildFoldersOutsideGitAreKept(t *testing.T) {
 	// Remove re-checks too: even if asked, it won't delete them. Only Vet
 	// stands in the way here: the folder is real, in root, and is the one
 	// the candidate names.
-	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{at(t, filepath.Join(root, "lib/build"))}, 4)
+	deleted, _ := Remove(open(t, root), DefaultTargets(), []Candidate{at(t, filepath.Join(root, "lib/build"))}, 4, newTrash(t))
 	if len(deleted) != 0 || !exists(filepath.Join(root, "lib/build/Gruntfile.js")) {
 		t.Error("deleted a build folder outside git")
 	}
@@ -113,7 +113,7 @@ func TestRemoveKeepsFolderTrackedAfterScan(t *testing.T) {
 	}
 	gitRepo(t, proj, "-f", "dist/app.js")
 
-	if deleted, _ := Remove(open(t, root), tg, cands, 4); len(deleted) != 0 || !exists(filepath.Join(proj, "dist/app.js")) {
+	if deleted, _ := Remove(open(t, root), tg, cands, 4, newTrash(t)); len(deleted) != 0 || !exists(filepath.Join(proj, "dist/app.js")) {
 		t.Errorf("deleted %v, a folder git now tracks", deleted)
 	}
 }
@@ -214,7 +214,7 @@ func TestNestedCheckoutIsKept(t *testing.T) {
 	}
 	// A .git that appears after the scan protects the folder too.
 	must(t, os.WriteFile(filepath.Join(proj, "dist/.git"), []byte("gitdir: elsewhere\n"), 0o644))
-	if deleted, _ := Remove(open(t, root), tg, cands, 4); len(deleted) != 0 || !exists(filepath.Join(proj, "dist/app.js")) {
+	if deleted, _ := Remove(open(t, root), tg, cands, 4, newTrash(t)); len(deleted) != 0 || !exists(filepath.Join(proj, "dist/app.js")) {
 		t.Errorf("deleted %v, a folder with its own .git", deleted)
 	}
 }

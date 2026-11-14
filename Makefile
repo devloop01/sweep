@@ -17,4 +17,4 @@ demo:
 	go build -o demo/bin/sweep .
 	demo/setup.sh
 	vhs demo/sweep.tape
-	rm -rf demo/bin demo/projects
+	rm -rf demo/bin demo/projects demo/home

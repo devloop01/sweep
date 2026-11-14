@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds demo/projects, a made-up projects folder for the README recording
-# (make demo). It writes about 120 MB of zeros; sweep deletes some of it on
-# camera and make demo removes the rest.
+# (make demo). It writes about 120 MB of zeros; sweep moves some of it to
+# demo/home/.Trash on camera and make demo removes it all.
 set -eu
 cd "$(dirname "$0")"
 rm -rf projects

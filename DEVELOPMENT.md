@@ -48,7 +48,8 @@ cd ~/sweep-playground && ~/path/to/sweep/bin/sweep -n
 | `internal/sweep/scan.go` | Walking, matching, sizes, and the re-check before delete (`Vet`) |
 | `internal/sweep/git.go` | Whether a target may hold real files: tracked, or build output git doesn't ignore |
 | `internal/sweep/project.go` | Which project a folder belongs to, for grouping on the screen |
-| `internal/sweep/remove.go` | Deleting the vetted folders through an `os.Root` |
+| `internal/sweep/remove.go` | Moving the vetted folders to the Trash, or deleting them, through an `os.Root` |
+| `internal/sweep/trash.go` | Finding the Trash (`FindTrash`), naming folders in it, and the move itself |
 | `install.sh` | The `curl … \| sh` installer |
 
 ## Safety rules
@@ -65,7 +66,9 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
   both can point at root's home.
 - **No symlinks.** The walk never follows them, and a symlink or file with a
   target's name is skipped.
-- **Never inside** `.git` folders or `*.app` bundles.
+- **Never inside** `.git` folders, `*.app` bundles, or Trash folders
+  (`.Trash`, `.Trashes`), so what's already in the Trash is never listed.
+  None of these can be a target in `targets.conf` either.
 - **Folders that may hold real files are kept** (`keep` in `git.go`). Inside
   a git repo, a target is kept if `git ls-files` lists anything in it (a
   committed `dist`, scripts in `build`) or if git can't answer: it isn't
@@ -93,7 +96,20 @@ Every rule has tests. When in doubt, sweep skips a folder rather than deleting i
   symlink or rename swapped in at the last moment can't redirect it to
   another folder inside DIR either. Known limit: a different folder swapped
   into the target's exact place between that check and the delete (see
-  `remove.go`).
+  `remove.go`); that folder only ends up in the Trash.
+- **Trash, never delete.** sweep only moves folders to the Trash; there's
+  no way to delete for good. `FindTrash` picks `~/.Trash` when DIR is on the
+  home folder's volume, otherwise the volume's `.Trashes/<uid>`, creating
+  either if it's missing; it must be a real folder (not a symlink) on DIR's
+  volume, so the move is one rename and never a copy. sweep finds it before
+  scanning and stops if there's none (a dry run doesn't need one). The move
+  is a `renameatx_np` from the parent folder `Remove` holds open, with
+  `RENAME_EXCL`, so it moves exactly the checked folder and never replaces
+  anything in the Trash. The folder is named after where it came from
+  (`Code › web › node_modules`, numbered like Finder if taken), since
+  Finder's Put Back only works for what Finder trashed; starting with DIR's
+  name also keeps `.next` and friends visible in Finder. Tests replace `findTrash`
+  with a temporary folder (`TestMain`), so they never touch the real Trash.
 - **Interactive screen** (`tui.go`, when stdin and stdout are terminals and
   neither `-n` nor `-y` is given). It opens at once and the scan fills it in
   (`Progress.OnFound`). Space or enter selects (enter on a project's row
