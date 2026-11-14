@@ -3,7 +3,7 @@
 Clean up `node_modules` and build caches across all your projects, and get
 your disk space back.
 
-![sweep listing build folders, grouping them by project, sorting by last change, and deleting two after confirming](demo/sweep.gif)
+![sweep listing build folders, grouping them by project, sorting by last change, and moving two to the Trash after confirming](demo/sweep.gif)
 
 ## Install
 
