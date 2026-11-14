@@ -31,7 +31,7 @@ func TestKeyNames(t *testing.T) {
 		{Code: tea.KeyEnd}: "end", {Code: 'g', Text: "G", Mod: tea.ModShift}: "end",
 		{Code: tea.KeySpace, Text: " "}: "space", {Code: tea.KeyEnter}: "enter",
 		{Code: 'a', Text: "a"}: "all", {Code: 'q', Text: "q"}: "quit",
-		{Code: tea.KeyEscape}: "esc", {Code: 'c', Mod: tea.ModCtrl}: "quit", {Code: 'd', Mod: tea.ModCtrl}: "quit",
+		{Code: tea.KeyEscape}: "esc", {Code: 'c', Mod: tea.ModCtrl}: "interrupt", {Code: 'd', Mod: tea.ModCtrl}: "interrupt",
 		{Code: tea.KeyLeft}: "left", {Code: tea.KeyRight}: "right", {Code: tea.KeyTab}: "next", {Code: 'c', Text: "c"}: "fold",
 		{Code: 'y', Text: "y"}: "yes", {Code: 'n', Text: "n"}: "no",
 		{Code: 'd', Text: "d"}: "delete", {Code: tea.KeyBackspace}: "delete", {Code: tea.KeyDelete}: "delete",
@@ -573,6 +573,21 @@ func TestScreenHelpAndReveal(t *testing.T) {
 	if s.key("quit"); s.helping || s.quitting {
 		t.Error("q should only close the key list")
 	}
+	// ctrl+c and ctrl+d quit from anywhere, at the first press.
+	h := newScreen(3)
+	h.key("help")
+	if h.key("interrupt"); h.helping || !h.quitting {
+		t.Error("ctrl+c with the key list open didn't quit")
+	}
+	h = newScreen(3)
+	h.key("delete")
+	if h.key("interrupt"); !h.quitting || h.ask != nil {
+		t.Error("ctrl+c at the confirm dialog didn't quit")
+	}
+	h = newScreen(3)
+	if h.key("interrupt"); !h.quitting {
+		t.Error("ctrl+c didn't quit")
+	}
 	s.key("down")
 	s.key("open")
 	if s.reveal != "/r/p01/node_modules" {
@@ -776,5 +791,19 @@ func TestInteractiveQuitDeletesNothing(t *testing.T) {
 		if code != 0 || targetsLeft(root) != 3 || !strings.Contains(out, "Nothing deleted.") {
 			t.Errorf("%q: code %d, left %d, out:\n%q", input, code, targetsLeft(root), out)
 		}
+	}
+}
+
+// Quitting stops the scan: nobody is waiting for the rest of it.
+func TestQuitStopsScan(t *testing.T) {
+	root := fixture(t)
+	m := &model{s: newScreen(2), progress: &sweep.Progress{}}
+	m.s.scanning = true
+	if cands, _ := sweep.Scan(root, sweep.DefaultTargets(), 2, m.progress); len(cands) != 3 {
+		t.Fatalf("listed %d before quitting, want 3", len(cands))
+	}
+	m.Update(signalMsg{})
+	if cands, _ := sweep.Scan(root, sweep.DefaultTargets(), 2, m.progress); len(cands) != 0 {
+		t.Errorf("the scan went on after quitting: listed %d", len(cands))
 	}
 }

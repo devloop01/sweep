@@ -3,6 +3,9 @@
 package sweep
 
 import (
+	"fmt"
+	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -243,5 +246,109 @@ func TestKeepAllAnswersEachFolder(t *testing.T) {
 	}
 	if len(keepAll(nil)) != 0 {
 		t.Error("keepAll(nil) isn't empty")
+	}
+}
+
+// A scan asks each repo once; every folder must get the answer keep gives
+// when it asks git about that folder alone.
+func TestScanAnswersLikeKeep(t *testing.T) {
+	var tree []string
+	for i := range 40 {
+		pkg := fmt.Sprintf("root/mono/packages/p%02d/", i)
+		tree = append(tree, pkg+"package.json", pkg+"node_modules/f", pkg+"dist/f", pkg+".turbo/f")
+	}
+	tree = append(tree,
+		"root/mono/.gitignore", "root/mono/node_modules/f",
+		"root/mono/packages/p01/dist/committed.js", // tracked build output
+		"root/mono/packages/p02/build/new.sh",      // not ignored
+		"root/mono/packages/p03/.turbo/tracked",    // a tracked cache
+		"root/mono/packages/p04/target/f",          // a ! rule
+		"root/mono/packages/p05/out/f",             // ignored by a nested .gitignore
+		"root/mono/packages/p05/.gitignore",
+		"root/mono/packages/p06/node_modules/sub/f", // a tracked file deep inside
+		"root/mono/packages/ünï/dist/f",             // git may spell this path another way
+		"root/mono/packages/ünï/build/tracked",
+		"root/mono/vendor/inner/README", "root/mono/vendor/inner/.gitignore", "root/mono/vendor/inner/dist/f",
+		"root/mono/vendor/inner/build/f", // a repo inside the repo answers for its own folders
+		"root/loose/dist/f", "root/loose/node_modules/f")
+	_, root := build(t, tree...)
+	mono := filepath.Join(root, "mono")
+	must(t, os.WriteFile(filepath.Join(mono, ".gitignore"), []byte("dist/\nnode_modules\n.turbo/\n/packages/p04/target\n!/packages/p04/target\nvendor/\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(mono, "packages/p05/.gitignore"), []byte("out\n"), 0o644))
+	gitRepo(t, mono, "-f", ".gitignore", "packages/p01/dist/committed.js", "packages/p03/.turbo/tracked",
+		"packages/p05/.gitignore", "packages/p06/node_modules/sub/f", "packages/ünï/build/tracked")
+	inner := filepath.Join(mono, "vendor/inner")
+	must(t, os.WriteFile(filepath.Join(inner, ".gitignore"), []byte("dist/\n"), 0o644))
+	gitRepo(t, inner, "README", ".gitignore")
+
+	tg := DefaultTargets()
+	rs := &repos{t: tg}
+	defer rs.close()
+	n := 0
+	check := func() {
+		filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() || !tg.Match(p) {
+				return nil
+			}
+			n++
+			if got, want := rs.keepAll([]string{p})[0], keep(p); got != want {
+				t.Errorf("%s: the scan keeps it: %v, keep says %v", p, got, want)
+			}
+			return filepath.SkipDir
+		})
+	}
+	check()
+	if n < 130 {
+		t.Fatalf("checked %d folders", n)
+	}
+	for _, top := range []string{mono, inner} {
+		r := rs.repo(top)
+		if r.tracked == nil || r.check == nil || r.noCheck {
+			t.Errorf("%s: wasn't answered by one git: tracked %v, check %v, noCheck %v", top, r.tracked != nil, r.check != nil, r.noCheck)
+		}
+	}
+	if len(rs.tops) != 2 {
+		t.Errorf("asked %d repos, want 2", len(rs.tops))
+	}
+
+	// With the running git gone, the answers are the same, the slow way.
+	r := rs.repo(mono)
+	r.check.Process.Kill()
+	check()
+	if !r.noCheck {
+		t.Error("a killed check-ignore wasn't noticed")
+	}
+
+	// The whole scan agrees with keep too.
+	cands, kept := Scan(root, tg, 4, nil)
+	for _, c := range cands {
+		if keep(c.Path) {
+			t.Errorf("listed %s, which keep keeps", c.Path)
+		}
+	}
+	for _, k := range kept {
+		if !keep(k) {
+			t.Errorf("kept %s, which keep doesn't", k)
+		}
+	}
+	if len(cands)+len(kept) != n/2 {
+		t.Errorf("listed %d and kept %d of %d folders", len(cands), len(kept), n/2)
+	}
+}
+
+// On a disk that ignores case, Build/ in git's list is build/ on disk: its
+// tracked files keep the folder whichever way it's spelled.
+func TestTrackedTargetsIgnoreCase(t *testing.T) {
+	_, root := build(t, "root/proj/Build/tool.sh", "root/proj/apps/Web/dist/x", "root/proj/src/main.go", "root/proj/.Vercel/Output/f")
+	proj := filepath.Join(root, "proj")
+	gitRepo(t, proj, "Build/tool.sh", "apps/Web/dist/x", "src/main.go", ".Vercel/Output/f")
+	got := trackedTargets(proj, DefaultTargets())
+	want := map[string]bool{"build": true, "apps/web/dist": true, ".vercel/output": true}
+	if !maps.Equal(got, want) {
+		t.Errorf("tracked targets %v, want %v", got, want)
+	}
+	t.Setenv("PATH", t.TempDir()) // no git
+	if got := trackedTargets(proj, DefaultTargets()); got != nil {
+		t.Errorf("without git: %v, want nil (keep everything)", got)
 	}
 }

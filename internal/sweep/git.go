@@ -3,13 +3,18 @@
 package sweep
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -39,7 +44,7 @@ func keepAll(dirs []string) []bool {
 		return keeps
 	}
 	parent := filepath.Dir(dirs[0])
-	repo := inRepo(dirs[0])
+	_, repo := repoTop(dirs[0])
 	var ask []int // dirs git has to answer for
 	for i, dir := range dirs {
 		switch _, err := os.Lstat(filepath.Join(dir, ".git")); {
@@ -143,14 +148,224 @@ func git(ctx context.Context, dir string, args ...string) *exec.Cmd {
 	return cmd
 }
 
-// inRepo reports whether a folder above dir has a .git entry.
-func inRepo(dir string) bool {
+// repoTop is the nearest folder above dir with a .git entry: the top of the
+// repository git answers for when asked about dir.
+func repoTop(dir string) (top string, ok bool) {
 	for d := filepath.Dir(dir); ; d = filepath.Dir(d) {
 		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
-			return true
+			return d, true
 		}
 		if d == filepath.Dir(d) {
-			return false
+			return "", false
 		}
+	}
+}
+
+// repos is keep for a whole scan: it asks each repository once which
+// folders hold tracked files, and keeps one git running per repository to
+// ask about ignore rules, where keep runs git for every folder. In a
+// monorepo with thousands of packages that's two git runs, not thousands.
+//
+// Its answers only decide what the scan lists. Remove asks keep again about
+// each folder, with git's own answer for that folder, before deleting it.
+type repos struct {
+	t    Targets
+	mu   sync.Mutex
+	tops map[string]*repo
+}
+
+type repo struct {
+	top  string
+	once sync.Once
+	// tracked is the target folders with tracked files, as lower-case paths
+	// from top; nil when git couldn't list them, and every folder is kept.
+	tracked map[string]bool
+
+	mu      sync.Mutex // one question to check at a time
+	check   *exec.Cmd  // git check-ignore, answering path by path
+	in      io.WriteCloser
+	out     *bufio.Reader
+	noCheck bool // check failed: ask the slow way from now on
+}
+
+func (rs *repos) repo(top string) *repo {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.tops == nil {
+		rs.tops = map[string]*repo{}
+	}
+	r := rs.tops[top]
+	if r == nil {
+		r = &repo{top: top}
+		rs.tops[top] = r
+	}
+	return r
+}
+
+// keepAll is keepAll for folders in the same parent folder.
+func (rs *repos) keepAll(dirs []string) []bool {
+	keeps := make([]bool, len(dirs))
+	if len(dirs) == 0 {
+		return keeps
+	}
+	top, inRepo := repoTop(dirs[0])
+	var slow []int // dirs to ask git about one folder at a time
+	for i, dir := range dirs {
+		name := filepath.Base(dir)
+		rel, err := filepath.Rel(top, dir)
+		switch _, gitErr := os.Lstat(filepath.Join(dir, ".git")); {
+		case gitErr == nil:
+			keeps[i] = true
+		case !inRepo:
+			keeps[i] = slices.Contains(gitOnly, name)
+		case err != nil || !plain(rel):
+			// ponytail: git may spell an é differently from the disk
+			// (core.precomposeunicode), so such paths aren't looked up in
+			// its list.
+			slow = append(slow, i)
+		default:
+			r := rs.repo(top)
+			r.once.Do(func() { r.tracked = trackedTargets(top, rs.t) })
+			switch {
+			case r.tracked == nil || r.tracked[strings.ToLower(filepath.ToSlash(rel))]:
+				keeps[i] = true
+			case slices.Contains(gitOnly, name):
+				keeps[i] = !r.ignored(filepath.ToSlash(rel))
+			}
+		}
+	}
+	if len(slow) > 0 {
+		var ds []string
+		for _, i := range slow {
+			ds = append(ds, dirs[i])
+		}
+		for j, k := range keepAll(ds) {
+			keeps[slow[j]] = k
+		}
+	}
+	return keeps
+}
+
+// plain reports whether s is printable ASCII: bytes git and the disk can
+// only spell one way.
+func plain(s string) bool {
+	return !strings.ContainsFunc(s, func(r rune) bool { return r < ' ' || r > '~' })
+}
+
+// trackedTargets lists the target folders under top that hold tracked files
+// (or are tracked themselves, like a submodule), as lower-case paths from
+// top: APFS ignores case, so Build/ in git's list is build/ on disk. It
+// returns nil when git can't say.
+func trackedTargets(top string, t Targets) map[string]bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := git(ctx, top, "ls-files", "-z")
+	out, err := cmd.StdoutPipe()
+	if err != nil || cmd.Start() != nil {
+		return nil
+	}
+	tracked := map[string]bool{}
+	sc := bufio.NewScanner(out)
+	sc.Buffer(nil, 1<<20)
+	sc.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		if i := bytes.IndexByte(data, 0); i >= 0 {
+			return i + 1, data[:i], nil
+		}
+		if atEOF && len(data) > 0 {
+			return 0, nil, errors.New("git ls-files: cut short")
+		}
+		return 0, nil, nil
+	})
+	for sc.Scan() {
+		// Every folder on the way to the file, and the entry itself.
+		p := "/" + sc.Text()
+		for i := 1; i <= len(p); i++ {
+			if i < len(p) && p[i] != '/' {
+				continue
+			}
+			if low := strings.ToLower(p[:i]); t.Match(p[:i]) || t.Match(low) {
+				tracked[low[1:]] = true
+			}
+		}
+	}
+	if werr := cmd.Wait(); sc.Err() != nil || werr != nil {
+		return nil
+	}
+	return tracked
+}
+
+// ignored is ignored for one folder, rel from the repo's top. It asks a git
+// that stays running for the whole scan; if that fails, it asks a new git
+// each time, like keep.
+func (r *repo) ignored(rel string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	name := path.Base(rel)
+	if !r.noCheck {
+		if pattern, ok := r.ask(rel); ok {
+			return pattern != "" && !strings.HasPrefix(pattern, "!") && path.Base(strings.TrimSuffix(pattern, "/")) == name
+		}
+		r.noCheck = true
+		r.stop()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return ignored(ctx, filepath.Join(r.top, filepath.FromSlash(path.Dir(rel))), []string{name})[name]
+}
+
+// ask puts rel to the running check-ignore and returns the pattern that
+// covers it, "" for none. With -n git answers for every path, so each
+// question has exactly one answer: source, line, pattern, path.
+func (r *repo) ask(rel string) (pattern string, ok bool) {
+	if r.check == nil {
+		// No timeout on the command: it lives as long as the scan.
+		cmd := git(context.Background(), r.top, "check-ignore", "-v", "-n", "-z", "--stdin")
+		in, err1 := cmd.StdinPipe()
+		out, err2 := cmd.StdoutPipe()
+		if err1 != nil || err2 != nil || cmd.Start() != nil {
+			return "", false
+		}
+		r.check, r.in, r.out = cmd, in, bufio.NewReader(out)
+	}
+	// A git that stops answering is killed, which ends the read below.
+	cmd := r.check
+	timer := time.AfterFunc(10*time.Second, func() { cmd.Process.Kill() })
+	defer timer.Stop()
+	if _, err := io.WriteString(r.in, rel+"/\x00"); err != nil {
+		return "", false
+	}
+	var f [4]string
+	for i := range f {
+		s, err := r.out.ReadString(0)
+		if err != nil {
+			return "", false
+		}
+		f[i] = strings.TrimSuffix(s, "\x00")
+	}
+	if f[3] != rel+"/" {
+		return "", false // not the answer to this question
+	}
+	return f[2], true
+}
+
+// stop ends the running check-ignore, if any.
+func (r *repo) stop() {
+	if r.check == nil {
+		return
+	}
+	r.in.Close()
+	r.check.Process.Kill()
+	r.check.Wait()
+	r.check = nil
+}
+
+// close ends every git left running.
+func (rs *repos) close() {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for _, r := range rs.tops {
+		r.mu.Lock()
+		r.stop()
+		r.mu.Unlock()
 	}
 }
