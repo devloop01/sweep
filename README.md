@@ -45,10 +45,14 @@ sweep
 Pick folders with space, press `d`, and confirm. The folders go to the
 Trash, so nothing is lost if you change your mind.
 
+Panels at the top show your disk, how much sweep can free, and where the
+space is going. The list also has your package managers' global caches,
+under "package caches" (see [Package caches](#package-caches)).
+
 | Key | Does |
 |---|---|
 | `space` or `enter` | select a folder |
-| `d` | move the selected folders to the Trash (sweep asks first) |
+| `d` | move the selected folders to the Trash, or clear the selected caches (sweep asks first) |
 | `t` | group folders by project |
 | `s` | sort by size, name, or last change |
 | `?` | show every key |
@@ -104,10 +108,44 @@ sweep never deletes things that would make you set up a project again, like
 
 </details>
 
+## Package caches
+
+Package managers keep one shared download cache in your home folder, used
+by every project. sweep lists the ones it finds, with what clearing each
+would free:
+
+| Cache | Cleared with |
+|---|---|
+| npm | `npm cache clean --force` |
+| bun | `bun pm cache rm` |
+| Go build cache | `go clean -cache` |
+| Go modules | `go clean -modcache` |
+| Homebrew | `brew cleanup --prune=all` (also removes old versions of installed formulae, as Homebrew does every 30 days) |
+| pip | `pip3 cache purge` |
+| uv | `uv cache clean` |
+
+Caches don't go to the Trash: sweep runs the tool's own command, which
+knows what's safe to remove, and the space comes back at once. Whatever
+your next install needs downloads again. `a` never selects caches; pick
+them one by one, or the "package caches" row for all. `-n` and `-y` leave
+them out.
+
+<details>
+<summary>Why pnpm's store isn't listed</summary>
+
+On a Mac, pnpm copies packages into projects as APFS clones, so sweep
+can't tell which store files a project still uses. Its size would promise
+gigabytes that `pnpm store prune` doesn't free. Run that yourself when you
+want to.
+
+</details>
+
 ## Safety
 
 - sweep asks before moving anything, unless you pass `-y`.
-- It never deletes: folders go to the Trash, so you can get one back.
+- It never deletes folders: they go to the Trash, so you can get one back.
+  Package caches are the one exception: their own tool clears them, after
+  you confirm.
 - It only deletes folders with the names above, never your code.
 - It won't run in your home folder, `~/Library`, system folders, or with
   `sudo`.

@@ -45,9 +45,13 @@ type item struct {
 	path     string // relative to DIR, printable
 	state    state
 	selected bool
-	proj     *project // nil outside any project
-	sub      string   // path inside the project, printable
+	proj     *project     // nil outside any project
+	sub      string       // path inside the project, printable
+	cache    *sweep.Cache // a package manager's cache, cleared by its tool; nil for a folder
 }
+
+// cacheGroup is the project the package caches are listed under.
+var cacheGroup = &project{sweep.Project{Dir: "package caches", Kind: "global"}, "package caches"}
 
 // layout is where view drew what clicks can hit, by line and column.
 type layout struct {
@@ -162,14 +166,19 @@ type screen struct {
 		row string
 		at  time.Time
 	}
-	free int64  // free space on DIR's disk, 0 if unknown
-	disk int64  // DIR's disk size, 0 if unknown
-	dir  string // DIR as shown in the frame's title, printable
-	yes  bool   // the dialog's Move to Trash button has focus (Cancel does at first)
+	finding bool   // package caches are still being looked for
+	cleared int64  // bytes clearing caches freed
+	free    int64  // free space on DIR's disk, 0 if unknown
+	disk    int64  // DIR's disk size, 0 if unknown
+	dir     string // DIR as shown in the frame's title, printable
+	yes     bool   // the dialog's Move to Trash button has focus (Cancel does at first)
 }
 
 // moveButton is the label of the dialog's button that goes ahead.
 const moveButton = "Move to Trash"
+
+// clearButton goes ahead when the dialog clears caches.
+const clearButton = "Clear"
 
 // add puts a folder the scan just found into the list, biggest first.
 func (s *screen) add(c sweep.Candidate, path string) { s.addIn(c, path, nil) }
@@ -184,6 +193,16 @@ func (s *screen) addIn(c sweep.Candidate, path string, p *project) {
 	s.items = append(s.items, it)
 	s.total += c.Size
 	s.sort()
+}
+
+// addCache lists a package manager's cache under "package caches".
+func (s *screen) addCache(c sweep.Cache) {
+	if s.find(c.Dir) >= 0 {
+		return // DIR is inside a cache, and the scan already listed it
+	}
+	s.addIn(sweep.Candidate{Path: c.Dir, Size: c.Size}, c.Name, cacheGroup)
+	it := &s.items[s.find(c.Dir)]
+	it.cache, it.sub = &c, c.Name
 }
 
 // finish takes the scan's final sizes (hard links counted once) and how
@@ -332,9 +351,12 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 		s.toggle()
 	case "all":
 		// Select every folder still there, or unselect all if they all are.
-		all := !slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready && !it.selected })
+		// Caches are left out: they're picked one by one, never by habit.
+		all := !slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready && !it.selected && it.cache == nil })
 		for i := range s.items {
-			s.items[i].selected = !all && s.items[i].state == ready
+			if s.items[i].cache == nil {
+				s.items[i].selected = !all && s.items[i].state == ready
+			}
 		}
 	case "left", "right", "fold":
 		// Collapse or open the cursor's project (c: every project). From a
@@ -457,6 +479,19 @@ func (s *screen) done(path string, err error) {
 	}
 	s.items[i].state = deleted
 	s.freed += s.items[i].cand.Size
+}
+
+// cleaned records how clearing the cache at path went.
+func (s *screen) cleaned(path string, freed int64, err error) {
+	s.deletions--
+	i := s.find(path)
+	s.cleared += freed
+	if err != nil {
+		s.items[i].state = failed
+		s.message = printable(err.Error())
+		return
+	}
+	s.items[i].state = deleted
 }
 
 // click applies a left click at column x, line y of the last frame: it
@@ -589,7 +624,7 @@ func sizeLook(b int64) lipgloss.Style {
 // the list, a status line, and the keys that do something right now.
 func (s *screen) view(l look, w, h int) []string {
 	head := strong.Render(folders(len(s.items)) + " · " + human(s.total))
-	if s.scanning {
+	if s.scanning || s.finding {
 		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %d checked, %d found", s.checked, len(s.items)))
 	}
 	// Free space goes last, and only if it fits whole.
@@ -617,7 +652,7 @@ func (s *screen) view(l look, w, h int) []string {
 	if roomy {
 		side, rim = edge.Render("│"), 1
 		right := folders(len(s.items))
-		if s.scanning {
+		if s.scanning || s.finding {
 			right = l.spin + " " + right
 		}
 		// The path gives way first (cut from the left), so the count stays.
@@ -720,14 +755,18 @@ func (s *screen) view(l look, w, h int) []string {
 			box = faint.Inherit(row).Render("[ ]")
 		}
 		status, style := human(size), sizeLook(size)
+		gone, going := "✓ in Trash", " moving"
+		if it.cache != nil {
+			gone, going = "✓ cleared", " clearing"
+		}
 		switch {
 		case ndeleting > 0:
-			status, style = l.spin+" moving", warn
+			status, style = l.spin+going, warn
 		case nready > 0:
 		case nfailed > 0:
 			status, style = "✗ failed", bad
 		default:
-			status, style = "✓ in Trash", good
+			status, style = gone, good
 		}
 		var cells string
 		switch {
@@ -831,7 +870,7 @@ func (s *screen) view(l look, w, h int) []string {
 			x := bx + ansi.StringWidth(plain[:i])
 			return [2]int{x - 2, x + len(label) + 2} // with the button's padding
 		}
-		s.drawn.buttons, s.drawn.del, s.drawn.can = y, find(moveButton), find("Cancel")
+		s.drawn.buttons, s.drawn.del, s.drawn.can = y, find(s.goButton()), find("Cancel")
 	}
 	return lines[:min(len(lines), max(h, 1))]
 }
@@ -864,7 +903,14 @@ func (s *screen) dialog(l look, w int) string {
 	case same:
 		what += " in " + fit(first.proj.name, min(30, max(w-47, 8)))
 	}
-	title := "Move " + what + " (" + human(size) + ") to Trash?"
+	title, note := "Move "+what+" ("+human(size)+") to Trash?", ""
+	if nc := s.askedCaches(); nc > 0 {
+		title = "Clear " + what + " (" + human(size) + ")?"
+		if nc < len(s.ask) {
+			title = fmt.Sprintf("Move %s to Trash and clear %s (%s)?", folders(len(s.ask)-nc), caches(nc), human(size))
+		}
+		note = faint.Render("Caches skip the Trash and download again when needed.")
+	}
 	button := func(label string, focus bool) string {
 		st := lipgloss.NewStyle().Padding(0, 2).Foreground(lipgloss.LightDark(l.dark)(lipgloss.Color("#4A4A4A"), lipgloss.Color("#B2B2B2"))).
 			Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E4E4E4"), lipgloss.Color("#3A3A3A")))
@@ -873,12 +919,63 @@ func (s *screen) dialog(l look, w int) string {
 		}
 		return st.Render(label)
 	}
-	body := lipgloss.JoinVertical(lipgloss.Center,
-		strong.Render(title),
-		"",
-		button(moveButton, s.yes)+"  "+button("Cancel", !s.yes),
-	)
+	parts := []string{strong.Render(title)}
+	if note != "" {
+		parts = append(parts, lipgloss.NewStyle().Width(min(lipgloss.Width(title), max(w-10, 20))).Align(lipgloss.Center).Render(note))
+	}
+	parts = append(parts, "", button(s.goButton(), s.yes)+"  "+button("Cancel", !s.yes))
+	body := lipgloss.JoinVertical(lipgloss.Center, parts...)
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(accent).Padding(1, 3).Render(body)
+}
+
+// askedCaches is how many of the things the dialog asks about are caches.
+func (s *screen) askedCaches() int {
+	n := 0
+	for _, p := range s.ask {
+		if i := s.find(p); i >= 0 && s.items[i].cache != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// goButton is the dialog's button that goes ahead.
+func (s *screen) goButton() string {
+	if s.askedCaches() > 0 {
+		return clearButton
+	}
+	return moveButton
+}
+
+// dWord is what d does now, for the key bar: clear when it would act on
+// caches only.
+func (s *screen) dWord(nsel int) string {
+	acts := func(i int) bool { return s.items[i].state == ready && (nsel == 0 || s.items[i].selected) }
+	var on []int
+	if nsel == 0 && len(s.rows) > 0 {
+		on = s.under()
+	} else if nsel > 0 {
+		for i := range s.items {
+			on = append(on, i)
+		}
+	}
+	for _, i := range on {
+		if acts(i) && s.items[i].cache == nil {
+			return "trash"
+		}
+	}
+	if slices.ContainsFunc(on, acts) {
+		return "clear"
+	}
+	return "trash"
+}
+
+// caches is "1 cache" or "n caches".
+func caches(n int) string {
+	if n == 1 {
+		return "1 cache"
+	}
+	return fmt.Sprintf("%d caches", n)
 }
 
 // keyList is the box ? opens: every key and what it does.
@@ -891,7 +988,8 @@ func keyList(l look) string {
 		{"space", "select a folder, or all of a project's"},
 		{"a", "select all, or none"},
 		{"enter", "select a folder, or collapse or open a project"},
-		{"d ⌫", "move the selected folders, or the highlighted one, to the Trash"},
+		{"d ⌫", "move the selected folders, or the highlighted one, to the Trash;"},
+		{"", "a package cache is cleared by its own tool instead"},
 		{"s", "sort by size, name, or last change"},
 		{"t", "group folders by project"},
 		{"← → h l", "collapse or open a project"},
@@ -943,7 +1041,7 @@ func (s *screen) help(l look, w int) string {
 		// The project view shows c in a's place; there's room for one.
 		bind("a", "all", !s.tree && slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
 		bind("c", "fold all", s.tree && slices.ContainsFunc(s.rows, func(r row) bool { return r.head }), "fold"),
-		bind("d", "trash", !s.quitting && (nsel > 0 || canSelect), "delete"),
+		bind("d", s.dWord(nsel), !s.quitting && (nsel > 0 || canSelect), "delete"),
 		bind("t", "projects", len(s.items) > 0, "tree"),
 		bind("?", "help", true, "help"),
 		bind("q", "quit", true, "quit"),
@@ -951,9 +1049,11 @@ func (s *screen) help(l look, w int) string {
 }
 
 type result struct {
-	path string
-	err  error
-	free int64 // the disk's free space after it, read off the UI thread
+	path  string
+	err   error
+	free  int64 // the disk's free space after it, read off the UI thread
+	cache bool  // path was a package cache, cleared
+	freed int64 // what clearing it freed
 }
 
 // interactive scans root inside the screen, lets the user move folders to
@@ -971,12 +1071,16 @@ func interactive(e env, r *os.Root, t sweep.Targets, root, trash string) int {
 		return 1
 	}
 
-	var n, nfailed int
+	var n, nc, nfailed, ncfailed int // folders moved, caches cleared, and those that failed
 	for _, it := range s.items {
-		switch it.state {
-		case deleted:
+		switch {
+		case it.state == deleted && it.cache != nil:
+			nc++
+		case it.state == deleted:
 			n++
-		case failed:
+		case it.state == failed && it.cache != nil:
+			ncfailed++
+		case it.state == failed:
 			nfailed++
 		}
 	}
@@ -986,16 +1090,26 @@ func interactive(e env, r *os.Root, t sweep.Targets, root, trash string) int {
 	switch {
 	case len(s.items) == 0 && !s.scanning:
 		fmt.Fprintln(e.stdout, "Nothing to clean.")
-	case n == 0 && nfailed == 0:
+	case n == 0 && nc == 0 && nfailed == 0 && ncfailed == 0:
 		fmt.Fprintln(e.stdout, "Nothing moved.")
 	default:
-		fmt.Fprintln(e.stdout, e.paint(green, summary(n, n, s.freed)))
+		if n > 0 || nfailed > 0 {
+			fmt.Fprintln(e.stdout, e.paint(green, summary(n, n, s.freed)))
+		}
+		if nc > 0 || s.cleared > 0 {
+			fmt.Fprintln(e.stdout, e.paint(green, fmt.Sprintf("Cleared %s, %s.", caches(nc), human(s.cleared))))
+		}
 		if n > 0 {
 			fmt.Fprintln(e.stdout, emptyHint)
 		}
 	}
+	if ncfailed > 0 {
+		fmt.Fprintf(e.stderr, "sweep: couldn't clear %s.\n", caches(ncfailed))
+	}
 	if nfailed > 0 {
 		fmt.Fprintf(e.stderr, "sweep: couldn't move %s to the Trash.\n", folders(nfailed))
+	}
+	if nfailed > 0 || ncfailed > 0 {
 		return 1
 	}
 	return 0
@@ -1008,7 +1122,9 @@ type (
 		path string
 		proj *project
 	}
-	scanDoneMsg struct {
+	cacheMsg      struct{ c sweep.Cache }
+	cachesDoneMsg struct{}
+	scanDoneMsg   struct {
 		cands []sweep.Candidate
 		kept  int
 	}
@@ -1022,7 +1138,8 @@ type model struct {
 	e        env
 	w, h     int
 	progress *sweep.Progress
-	remove   func(sweep.Candidate) result
+	remove   func(sweep.Candidate) result // a folder, to the Trash
+	clean    func(sweep.Cache) result     // a package cache, cleared by its tool
 	spin     spinner.Model
 	spinning bool // a spinner tick is pending
 	dark     bool // the terminal's background, once it has said
@@ -1060,7 +1177,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			break               // other keys do nothing, not even unpin the cursor
 		}
 		for _, c := range m.s.key(k) {
-			cmds = append(cmds, func() tea.Msg { return m.remove(c) })
+			cmds = append(cmds, m.run(c))
 		}
 		if p := m.s.reveal; p != "" {
 			m.s.reveal = ""
@@ -1069,7 +1186,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseClickMsg:
 		if msg.Button == tea.MouseLeft {
 			for _, c := range m.s.click(msg.X, msg.Y) {
-				cmds = append(cmds, func() tea.Msg { return m.remove(c) })
+				cmds = append(cmds, m.run(c))
 			}
 		}
 	case tea.MouseWheelMsg:
@@ -1087,15 +1204,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.s.addIn(msg.cand, msg.path, msg.proj)
 	case scanDoneMsg:
 		m.s.finish(msg.cands, msg.kept)
-		if len(m.s.items) == 0 {
-			m.s.quit() // nothing to clean: close and say so
-		}
+
 		if m.e.afterScan != nil {
 			m.e.afterScan()
 		}
 	case result:
-		m.s.done(msg.path, msg.err)
+		if msg.cache {
+			m.s.cleaned(msg.path, msg.freed, msg.err)
+		} else {
+			m.s.done(msg.path, msg.err)
+		}
 		m.s.free = msg.free
+	case cacheMsg:
+		m.s.addCache(msg.c)
+	case cachesDoneMsg:
+		m.s.finding = false
 	case signalMsg:
 		m.s.quit()
 	case tea.BackgroundColorMsg:
@@ -1106,14 +1229,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The spinner runs while something is going on; each tick also
 		// redraws the scan's folder count.
 		m.spinning = false
-		if m.s.scanning || m.s.deletions > 0 {
+		if m.s.scanning || m.s.finding || m.s.deletions > 0 {
 			var cmd tea.Cmd
 			m.spin, cmd = m.spin.Update(msg)
 			cmds, m.spinning = append(cmds, cmd), true
 		}
 	}
-	if !m.spinning && (m.s.scanning || m.s.deletions > 0) {
+	if !m.spinning && (m.s.scanning || m.s.finding || m.s.deletions > 0) {
 		cmds, m.spinning = append(cmds, m.spin.Tick), true
+	}
+	if !m.s.scanning && !m.s.finding && len(m.s.items) == 0 && !m.s.quitting {
+		m.s.quit() // nothing to clean: close and say so
 	}
 	m.s.checked = m.progress.Dirs()
 	if m.s.quitting {
@@ -1123,6 +1249,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, tea.Batch(cmds...)
+}
+
+// run starts deleting c: a package cache is cleared by its tool, a folder
+// goes to the Trash. Never the other way round.
+func (m *model) run(c sweep.Candidate) tea.Cmd {
+	if i := m.s.find(c.Path); i >= 0 && m.s.items[i].cache != nil {
+		cc := *m.s.items[i].cache
+		return func() tea.Msg { return m.clean(cc) }
+	}
+	return func() tea.Msg { return m.remove(c) }
 }
 
 func (m *model) View() tea.View {
@@ -1158,8 +1294,14 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root, trash string
 			rel, _ := filepath.Rel(root, c.Path)
 			err = fmt.Errorf("kept %s: it changed since the scan", printable(rel))
 		}
-		return result{c.Path, err, diskFree(root)}
+		return result{path: c.Path, err: err, free: diskFree(root)}
+	}, clean: func(c sweep.Cache) result {
+		sem <- struct{}{}
+		defer func() { <-sem }()
+		freed, err := e.clean(c)
+		return result{path: c.Dir, err: err, free: diskFree(root), cache: true, freed: freed}
 	}}
+	s.finding = e.caches != nil
 	// Bubble Tea's own handler quits at once on SIGTERM; sweep's quit waits
 	// for running deletions. (Ctrl-C arrives as a key: input is raw.)
 	// Bubble Tea stops reading quietly at end of input (a hung-up terminal
@@ -1194,6 +1336,12 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root, trash string
 		cands, kept := sweep.Scan(root, t, e.workers, m.progress)
 		p.Send(scanDoneMsg{cands, len(kept)})
 	}()
+	if e.caches != nil {
+		go func() {
+			e.caches(m.progress, func(c sweep.Cache) { p.Send(cacheMsg{c}) })
+			p.Send(cachesDoneMsg{})
+		}()
+	}
 	_, err := p.Run()
 	if e.flushInput != nil {
 		e.flushInput() // a terminal reply that came in late, so it's not typed at the prompt
@@ -1314,7 +1462,11 @@ func (s *screen) panels(l look, w int) []string {
 			continue
 		}
 		avail += it.cand.Size
-		byKind[kindOf(it.cand.Path)] += it.cand.Size
+		kind := kindOf(it.cand.Path)
+		if it.cache != nil {
+			kind = "pkg caches"
+		}
+		byKind[kind] += it.cand.Size
 		if it.selected {
 			nsel++
 			sel += it.cand.Size
@@ -1334,7 +1486,7 @@ func (s *screen) panels(l look, w int) []string {
 		disk = append(disk, stat("free", human(s.free)))
 	}
 	found := strong.Render(human(avail))
-	if s.scanning {
+	if s.scanning || s.finding {
 		found += " " + l.spin + faint.Render(fmt.Sprintf(" %d checked", s.checked))
 	}
 	disk = append(disk, stat("can free", found))
@@ -1343,6 +1495,12 @@ func (s *screen) panels(l look, w int) []string {
 	}
 	if s.freed > 0 {
 		disk = append(disk, stat("in Trash", good.Render(human(s.freed))))
+	}
+	if s.cleared > 0 {
+		disk = append(disk, stat("cleared", good.Render(human(s.cleared))))
+	}
+	if len(disk) > height && disk[1] == "" {
+		disk = slices.Delete(disk, 1, 2) // the gap under the gauge gives way
 	}
 
 	kinds := make([]string, 0, len(byKind))
