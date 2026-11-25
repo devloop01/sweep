@@ -41,9 +41,10 @@ Usage:
 In a terminal, sweep opens a list that fills in as it scans, biggest first:
   ↑/↓ or j/k    move (g/G: top/bottom)
   space/enter   select or unselect a folder (enter on a project: collapse/open)
-  a             select or unselect all folders (package caches are picked one by one)
+  a             select or unselect everything in the open tab
   d or ⌫        move the selected folders, or the highlighted one, to the Trash
-                (a package cache is cleared by its own tool, e.g. go clean -cache)
+                (in the caches tab: clear them, each with its own tool)
+  1 / 2         folders tab, or package caches tab
   y / n         confirm or cancel
   s             sort by size, name, or last change
   t             group folders by project
@@ -60,9 +61,9 @@ Flags:
   -h, --help      show this help
       --version   print the version
 
-The list also shows package manager caches (npm, bun, Go, Homebrew, pip,
-uv), under "package caches". They don't go to the Trash: sweep runs
-the tool's own clean command, and they download again when needed.
+A second tab (2) lists package manager caches (npm, bun, Go, Homebrew,
+pip, uv). They don't go to the Trash: sweep runs the tool's own clean
+command, and they download again when needed.
 
 Folders in the Trash still take up space until you empty it. Everything
 sweep removes by default comes back with npm/pnpm install or the next dev

@@ -9,8 +9,10 @@ and ~/Library. The user wanted them cleared from the dashboard.
 
 ## What
 
-- A "package caches" group in the list (tree view), and a "pkg caches" kind
-  in the by-kind panel. Flat view mixes them in by size.
+- Their own tab: `1 folders  2 caches` in the list frame's title, switched
+  with 1/2 or a click (changed from a group in the folder list at the
+  user's request). Rows read "npm · ~/.npm/_cacache"; the column is Cache,
+  with no Touched. The by-kind panel still shows "pkg caches".
 - Cleared by the tool's own command, never moved to the Trash and never
   deleted by sweep: npm, bun, Go build cache, Go modules, Homebrew, pip, uv.
 - The dialog says caches don't go to the Trash; rows say "clearing" and
@@ -29,8 +31,10 @@ and ~/Library. The user wanted them cleared from the dashboard.
 - **pnpm left out:** on APFS pnpm clones into projects, so used store files
   look unshared and its size overstated what `pnpm store prune` frees by
   ~13 GB on the dev machine. yarn left out (shims, berry vs classic).
-- **Never by habit:** `a` skips caches; `-n` and `-y` don't include them.
-  Picked one by one, or via the group row.
+- **Each tab acts on its own list:** a, space, d and the selected count
+  only see the open tab, so a cache is never cleared from the folders tab
+  or a folder moved from the caches tab. `-n` and `-y` don't include
+  caches.
 - **Separate paths:** `item.cache` marks a cache; the model routes caches to
   `clean` and folders to `remove`, tested both ways. Clean runs through the
   same semaphore, so quitting waits for it. Tests inject both; the real
@@ -38,7 +42,7 @@ and ~/Library. The user wanted them cleared from the dashboard.
 - The guard (home, ~/Library, dot folders) is unchanged: it governs the
   scan, and caches don't go through the scan.
 - "Nothing to clean" waits for both the scan and the cache search.
-- Caches are named after their tool ("Homebrew", "Go build"); flat view
-  adds "cache · ~/path" so they don't read as folders. Clearing one shows
+- Caches are named after their tool ("Homebrew", "Go build"), with their
+  path; cut from the right so the name stays. Clearing one shows
   the exact command in the dialog, since `brew cleanup` also removes old
   versions of installed formulae.

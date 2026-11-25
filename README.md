@@ -46,13 +46,14 @@ Pick folders with space, press `d`, and confirm. The folders go to the
 Trash, so nothing is lost if you change your mind.
 
 Panels at the top show your disk, how much sweep can free, and where the
-space is going. The list also has your package managers' global caches,
-under "package caches" (see [Package caches](#package-caches)).
+space is going. Press `2` for a second tab with your package managers'
+global caches (see [Package caches](#package-caches)), and `1` to go back.
 
 | Key | Does |
 |---|---|
 | `space` or `enter` | select a folder |
 | `d` | move the selected folders to the Trash, or clear the selected caches (sweep asks first) |
+| `1` `2` | switch between the folders tab and the package caches tab |
 | `t` | group folders by project |
 | `s` | sort by size, name, or last change |
 | `?` | show every key |
@@ -111,8 +112,8 @@ sweep never deletes things that would make you set up a project again, like
 ## Package caches
 
 Package managers keep one shared download cache in your home folder, used
-by every project. sweep lists the ones it finds, with what clearing each
-would free:
+by every project. sweep lists the ones it finds in its own tab (press `2`
+or click it), with what clearing each would free:
 
 | Cache | Cleared with |
 |---|---|
@@ -126,9 +127,9 @@ would free:
 
 Caches don't go to the Trash: sweep runs the tool's own command, which
 knows what's safe to remove, and the space comes back at once. Whatever
-your next install needs downloads again. `a` never selects caches; pick
-them one by one, or the "package caches" row for all. `-n` and `-y` leave
-them out.
+your next install needs downloads again. Each tab acts only on its own
+list: `d` in the folders tab never clears a cache, and `d` in the caches
+tab never moves a folder. `-n` and `-y` leave caches out.
 
 <details>
 <summary>Why pnpm's store isn't listed</summary>

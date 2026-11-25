@@ -50,12 +50,11 @@ type item struct {
 	cache    *sweep.Cache // a package manager's cache, cleared by its tool; nil for a folder
 }
 
-// cacheGroup is the project the package caches are listed under.
-var cacheGroup = &project{sweep.Project{Dir: "package caches", Kind: "global"}, "package caches"}
-
 // layout is where view drew what clicks can hit, by line and column.
 type layout struct {
 	head     int       // line of the column names, -1 if none
+	tabs     int       // line of the tabs, -1 if none
+	tabCols  [2][2]int // columns of the folders and caches tabs: [from, to)
 	cols     [3][2]int // columns of Folder, Touched, Size: [from, to)
 	list     int       // line of the first list row
 	shown    []string  // rowID of each list row drawn, top to bottom
@@ -166,12 +165,13 @@ type screen struct {
 		row string
 		at  time.Time
 	}
-	finding bool   // package caches are still being looked for
-	cleared int64  // bytes clearing caches freed
-	free    int64  // free space on DIR's disk, 0 if unknown
-	disk    int64  // DIR's disk size, 0 if unknown
-	dir     string // DIR as shown in the frame's title, printable
-	yes     bool   // the dialog's Move to Trash button has focus (Cancel does at first)
+	finding  bool   // package caches are still being looked for
+	onCaches bool   // the caches tab (2) is open, not the folders tab (1)
+	cleared  int64  // bytes clearing caches freed
+	free     int64  // free space on DIR's disk, 0 if unknown
+	disk     int64  // DIR's disk size, 0 if unknown
+	dir      string // DIR as shown in the frame's title, printable
+	yes      bool   // the dialog's Move to Trash button has focus (Cancel does at first)
 }
 
 // moveButton is the label of the dialog's button that goes ahead.
@@ -195,22 +195,20 @@ func (s *screen) addIn(c sweep.Candidate, path string, p *project) {
 	s.sort()
 }
 
-// addCache lists a package manager's cache under "package caches".
+// addCache lists a package manager's cache, in the caches tab.
 func (s *screen) addCache(c sweep.Cache) {
 	if s.find(c.Dir) >= 0 {
 		return // DIR is inside a cache, and the scan already listed it
 	}
-	s.addIn(sweep.Candidate{Path: c.Dir, Size: c.Size}, c.Name, cacheGroup)
-	it := &s.items[s.find(c.Dir)]
-	it.cache, it.sub = &c, c.Name
-	// Listed among folders, a bare "npm" would read like a folder's name.
 	where := c.Dir
 	if home, err := os.UserHomeDir(); err == nil {
 		if rel, err := filepath.Rel(home, c.Dir); err == nil && filepath.IsLocal(rel) {
 			where = "~/" + rel
 		}
 	}
-	it.path = c.Name + " cache · " + printable(where)
+	s.addIn(sweep.Candidate{Path: c.Dir, Size: c.Size}, c.Name+" · "+printable(where), nil)
+	s.items[s.find(c.Dir)].cache = &c
+	s.sort() // again, now it's known to be a cache: it moves to its tab
 }
 
 // finish takes the scan's final sizes (hard links counted once) and how
@@ -265,6 +263,9 @@ func (s *screen) sort() {
 	})
 	s.rows = s.rows[:0]
 	for i, it := range s.items {
+		if !s.inTab(it) {
+			continue // caches have no project, so a project's folders stay together
+		}
 		g := s.group(it)
 		many := n[g] > 1
 		if many && (i == 0 || s.group(s.items[i-1]) != g) {
@@ -330,7 +331,14 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 	if k == "quit" || k == "esc" {
 		s.quitting, s.ask = true, nil
 	}
-	if len(s.items) == 0 || k == "yes" || k == "no" || !s.tree && (k == "left" || k == "right" || k == "next" || k == "prev" || k == "fold") {
+	if k == "folders" || k == "caches" {
+		if s.onCaches != (k == "caches") {
+			s.onCaches, s.cursor, s.top = k == "caches", 0, 0
+			s.sort()
+		}
+		return nil
+	}
+	if len(s.rows) == 0 || k == "yes" || k == "no" || !s.tree && (k == "left" || k == "right" || k == "next" || k == "prev" || k == "fold") {
 		return nil // keys that do nothing here must not unpin the cursor
 	}
 	if !s.moved {
@@ -359,13 +367,14 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 		s.toggle()
 	case "all":
 		// Select every folder still there, or unselect all if they all are.
-		// Caches are left out: they're picked one by one, never by habit.
-		all := !slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready && !it.selected && it.cache == nil })
+		// Only the open tab: caches are never picked along with folders.
+		all := !slices.ContainsFunc(s.items, func(it item) bool { return s.inTab(it) && it.state == ready && !it.selected })
 		for i := range s.items {
-			if s.items[i].cache == nil {
+			if s.inTab(s.items[i]) {
 				s.items[i].selected = !all && s.items[i].state == ready
 			}
 		}
+
 	case "left", "right", "fold":
 		// Collapse or open the cursor's project (c: every project). From a
 		// folder inside it, the cursor moves up to the project's row.
@@ -435,10 +444,13 @@ func (s *screen) key(k string) (del []sweep.Candidate) {
 		if s.quitting {
 			return nil
 		}
-		picked := slices.ContainsFunc(s.items, func(it item) bool { return it.selected })
-		here := s.under()
+		picked := slices.ContainsFunc(s.items, func(it item) bool { return it.selected && s.inTab(it) })
+		var here []int
+		if len(s.rows) > 0 {
+			here = s.under()
+		}
 		for i, it := range s.items {
-			if it.state == ready && (it.selected || !picked && slices.Contains(here, i)) {
+			if it.state == ready && s.inTab(it) && (it.selected || !picked && slices.Contains(here, i)) {
 				s.ask = append(s.ask, it.cand.Path)
 			}
 		}
@@ -489,6 +501,9 @@ func (s *screen) done(path string, err error) {
 	s.freed += s.items[i].cand.Size
 }
 
+// inTab reports whether it is listed in the open tab.
+func (s *screen) inTab(it item) bool { return (it.cache != nil) == s.onCaches }
+
 // cleaned records how clearing the cache at path went.
 func (s *screen) cleaned(path string, freed int64, err error) {
 	s.deletions--
@@ -521,6 +536,12 @@ func (s *screen) click(x, y int) (del []sweep.Candidate) {
 		if y == d.buttons && in(d.can) {
 			return s.answer("no")
 		}
+		return nil
+	case y == d.tabs && in(d.tabCols[0]):
+		s.key("folders")
+		return nil
+	case y == d.tabs && in(d.tabCols[1]):
+		s.key("caches")
 		return nil
 	case y == d.head:
 		for i, o := range []order{byName, byRecent, bySize} {
@@ -657,16 +678,39 @@ func (s *screen) view(l look, w, h int) []string {
 	// Framed, the list runs edge to edge; its status goes in the bottom
 	// border, so the key bar sits right under it.
 	side, rim := " ", 0 // the list's left edge, and the columns the frame's right edge takes
+	tabLine := -1
 	if roomy {
 		side, rim = edge.Render("│"), 1
-		right := s.count()
-		if s.scanning || s.finding {
+		n := 0
+		for _, it := range s.items {
+			if s.inTab(it) {
+				n++
+			}
+		}
+		right, busy := folders(n), s.scanning
+		if s.onCaches {
+			right, busy = caches(n), s.finding
+		}
+		if busy {
 			right = l.spin + " " + right
 		}
+		// Tabs: the open one bright, the other faint, each with its key.
+		tab := func(key, name string, open bool) string {
+			if open {
+				return faint.Render(key+" ") + lipgloss.NewStyle().Foreground(accent).Bold(true).Render(name)
+			}
+			return faint.Render(key + " " + name)
+		}
+		tabs := tab("1", "folders", !s.onCaches) + "  " + tab("2", "caches", s.onCaches)
+		tabLine = len(lines)
 		// The path gives way first (cut from the left), so the count stays.
-		by := " · by " + orderNames[s.order]
-		room := w - len("┌─ folders ─  ") - len(by) - ansi.StringWidth(right) - len("  ─┐") - 2
-		lines = append(lines, frameTop("folders", faint.Render(fit(s.dir, max(room, 1))+by), right, w))
+		by := "by " + orderNames[s.order]
+		note := by
+		if !s.onCaches && s.dir != "" {
+			room := w - len("┌─ 1 folders  2 caches ─  · ") - len(by) - ansi.StringWidth(right) - len("  ─┐") - 2
+			note = fit(s.dir, max(room, 1)) + " · " + by
+		}
+		lines = append(lines, frameTop(tabs, faint.Render(note), right, w))
 	}
 	// framed closes a list line with the frame's right edge.
 	framed := func(line string) string {
@@ -679,7 +723,7 @@ func (s *screen) view(l look, w, h int) []string {
 	if roomy {
 		s.page = max(h-len(lines)-2, 1) // the frame's bottom with the status, keys
 	}
-	if roomy && len(s.items) > 0 {
+	if roomy && len(s.rows) > 0 {
 		s.page = max(s.page-1, 1)
 	}
 	if s.cursor < s.top {
@@ -689,7 +733,7 @@ func (s *screen) view(l look, w, h int) []string {
 		s.top = s.cursor - s.page + 1
 	}
 	ageW := 0 // "3mo ago" column plus its gap, only where there's room for it
-	if w >= 50 {
+	if w >= 50 && !s.onCaches {
 		ageW = 10
 	}
 	barW := 0 // size bar plus its gap, only if the path keeps 30 columns
@@ -701,8 +745,9 @@ func (s *screen) view(l look, w, h int) []string {
 	for _, r := range s.rows {
 		biggest = max(biggest, s.rowSize(r))
 	}
-	s.drawn = layout{head: -1, buttons: -1}
-	if roomy && len(s.items) > 0 {
+	// After "┌─ ": "1 folders  2 caches".
+	s.drawn = layout{head: -1, buttons: -1, tabs: tabLine, tabCols: [2][2]int{{3, 12}, {14, 22}}}
+	if roomy && len(s.rows) > 0 {
 		s.drawn.head = len(lines)
 		s.drawn.cols = [3][2]int{{8, 8 + room}, {8 + room + 2, 8 + room + 2 + ageW - 2}, {8 + room + 2 + ageW, 8 + room + 2 + ageW + 10}}
 		// The column the list is sorted by is marked with an arrow.
@@ -712,7 +757,11 @@ func (s *screen) view(l look, w, h int) []string {
 			}
 			return faint.Render(fmt.Sprintf("%*s", width, name))
 		}
-		names := side + "       " + label("Folder", byName, -room) + "  "
+		first := "Folder"
+		if s.onCaches {
+			first = "Cache"
+		}
+		names := side + "       " + label(first, byName, -room) + "  "
 		if ageW > 0 {
 			names += label("Touched", byRecent, 8) + "  "
 		}
@@ -815,6 +864,22 @@ func (s *screen) view(l look, w, h int) []string {
 		}
 		lines = append(lines, framed(side+bar+row.Render(" ")+box+row.Render("  ")+cells+row.Render(" ")))
 	}
+	if len(s.rows) == 0 {
+		var why string
+		switch {
+		case s.onCaches && s.finding:
+			why = "Looking for package caches…"
+		case s.onCaches:
+			why = "No package caches found."
+		case !s.scanning && slices.ContainsFunc(s.items, func(it item) bool { return it.cache != nil }):
+			why = "No folders to clean here. Press 2 for package caches."
+		case !s.scanning:
+			why = "No folders to clean here."
+		}
+		if why != "" && len(lines) < h-2 {
+			lines = append(lines, framed(side+"       "+faint.Render(why)))
+		}
+	}
 	for len(lines) < h-2 {
 		if roomy {
 			lines = append(lines, framed(side))
@@ -826,7 +891,7 @@ func (s *screen) view(l look, w, h int) []string {
 	var nsel int
 	var selSize int64
 	for _, it := range s.items {
-		if it.selected {
+		if it.selected && s.inTab(it) {
 			nsel++
 			selSize += it.cand.Size
 		}
@@ -918,11 +983,11 @@ func (s *screen) dialog(l look, w int) string {
 		what += " in " + fit(first.proj.name, min(30, max(w-47, 8)))
 	}
 	title, note := "Move "+what+" ("+human(size)+") to Trash?", ""
-	if nc := s.askedCaches(); nc > 0 {
-		title = "Clear " + what + " (" + human(size) + ")?"
-		if nc < len(s.ask) {
-			title = fmt.Sprintf("Move %s to Trash and clear %s (%s)?", folders(len(s.ask)-nc), caches(nc), human(size))
+	if s.askedCaches() > 0 { // all of them: a tab never mixes folders and caches
+		if len(s.ask) > 1 {
+			what = caches(len(s.ask))
 		}
+		title = "Clear " + what + " (" + human(size) + ")?"
 		note = faint.Render("Caches skip the Trash and download again when needed.")
 		if len(s.ask) == 1 {
 			note = faint.Render("Runs " + strings.Join(first.cache.Clean, " ") + ". Caches skip the Trash.")
@@ -964,24 +1029,9 @@ func (s *screen) goButton() string {
 	return moveButton
 }
 
-// dWord is what d does now, for the key bar: clear when it would act on
-// caches only.
-func (s *screen) dWord(nsel int) string {
-	acts := func(i int) bool { return s.items[i].state == ready && (nsel == 0 || s.items[i].selected) }
-	var on []int
-	if nsel == 0 && len(s.rows) > 0 {
-		on = s.under()
-	} else if nsel > 0 {
-		for i := range s.items {
-			on = append(on, i)
-		}
-	}
-	for _, i := range on {
-		if acts(i) && s.items[i].cache == nil {
-			return "trash"
-		}
-	}
-	if slices.ContainsFunc(on, acts) {
+// dWord is what d does in the open tab, for the key bar.
+func (s *screen) dWord() string {
+	if s.onCaches {
 		return "clear"
 	}
 	return "trash"
@@ -1017,10 +1067,11 @@ func keyList(l look) string {
 		{"pgup pgdn", "move a page"},
 		{"g G", "go to the top or bottom"},
 		{"space", "select a folder, or all of a project's"},
-		{"a", "select all folders, or none (caches are picked one by one)"},
+		{"a", "select all in this tab, or none"},
 		{"enter", "select a folder, or collapse or open a project"},
-		{"d ⌫", "move the selected folders, or the highlighted one, to the Trash;"},
-		{"", "a package cache is cleared by its own tool instead"},
+		{"d ⌫", "move the selected folders, or the highlighted one, to the Trash"},
+		{"", "(in caches: clear them, each with its own tool)"},
+		{"1 2", "folders, or package caches"},
 		{"s", "sort by size, name, or last change"},
 		{"t", "group folders by project"},
 		{"← → h l", "collapse or open a project"},
@@ -1050,7 +1101,7 @@ func (s *screen) help(l look, w int) string {
 	canSelect := len(s.rows) > 0 && slices.ContainsFunc(s.under(), func(i int) bool { return s.items[i].state == ready })
 	nsel := 0
 	for _, it := range s.items {
-		if it.selected {
+		if it.selected && s.inTab(it) {
 			nsel++
 		}
 	}
@@ -1072,8 +1123,10 @@ func (s *screen) help(l look, w int) string {
 		// The project view shows c in a's place; there's room for one.
 		bind("a", "all", !s.tree && slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
 		bind("c", "fold all", s.tree && slices.ContainsFunc(s.rows, func(r row) bool { return r.head }), "fold"),
-		bind("d", s.dWord(nsel), !s.quitting && (nsel > 0 || canSelect), "delete"),
-		bind("t", "projects", len(s.items) > 0, "tree"),
+		bind("d", s.dWord(), !s.quitting && (nsel > 0 || canSelect), "delete"),
+		bind("2", "caches", !s.onCaches, "caches"),
+		bind("1", "folders", s.onCaches, "folders"),
+		bind("t", "projects", !s.onCaches && len(s.rows) > 0, "tree"),
 		bind("?", "help", true, "help"),
 		bind("q", "quit", true, "quit"),
 	}), w-1)
@@ -1187,7 +1240,7 @@ var keyNames = map[string]string{
 	"space": "space", "enter": "enter", "a": "all", "d": "delete", "backspace": "delete", "delete": "delete",
 	"q": "quit", "esc": "esc", "ctrl+c": "interrupt", "ctrl+d": "interrupt",
 	"left": "left", "h": "left", "right": "right", "l": "right", "tab": "next", "shift+tab": "prev", "c": "fold", "s": "sort",
-	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help",
+	"y": "yes", "n": "no", "t": "tree", "o": "open", "?": "help", "1": "folders", "2": "caches",
 }
 
 // Init asks for the background color. Quitting waits for the answer (up to
@@ -1498,7 +1551,7 @@ func (s *screen) panels(l look, w int) []string {
 			kind = "pkg caches"
 		}
 		byKind[kind] += it.cand.Size
-		if it.selected {
+		if it.selected && s.inTab(it) { // what d acts on
 			nsel++
 			sel += it.cand.Size
 		}
@@ -1579,7 +1632,7 @@ func kindOf(path string) string {
 
 // panel is a bordered box w columns wide with height lines of body.
 func panel(title string, body []string, w, height int) []string {
-	out := []string{frameTop(title, "", "", w)}
+	out := []string{frameTop(lipgloss.NewStyle().Foreground(accent).Bold(true).Render(title), "", "", w)}
 	for i := range height {
 		var line string
 		if i < len(body) {
@@ -1593,7 +1646,7 @@ func panel(title string, body []string, w, height int) []string {
 // frameTop is a box's top border, w columns wide, with its title (and a
 // faint note after it) on the left and right on the right, like btop.
 func frameTop(title, note, right string, w int) string {
-	left := edge.Render("┌─ ") + lipgloss.NewStyle().Foreground(accent).Bold(true).Render(title) + " "
+	left := edge.Render("┌─ ") + title + " "
 	if note != "" {
 		left += edge.Render("─ ") + note + " "
 	}

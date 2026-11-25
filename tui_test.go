@@ -886,10 +886,11 @@ func TestMeter(t *testing.T) {
 	}
 }
 
-// A package cache is cleared by its tool and never moved to the Trash; a
-// folder is never handed to a clean command. a leaves caches alone, and the
-// dialog says caches don't go to the Trash.
-func TestCachesRouteToTheirTool(t *testing.T) {
+// Caches have their own tab (2). Each tab acts only on its own rows: a
+// cache is cleared by its tool and never moved to the Trash, a folder is
+// never handed to a clean command, and a pick in one tab isn't acted on
+// from the other.
+func TestCachesTab(t *testing.T) {
 	var removed []string
 	var cleaned []string
 	m := &model{s: newScreen(2), progress: &sweep.Progress{},
@@ -900,15 +901,41 @@ func TestCachesRouteToTheirTool(t *testing.T) {
 		},
 	}
 	s := m.s
-	s.tree, s.moved = true, true
-	s.addCache(sweep.Cache{Name: "Go build", Dir: "/home/Library/Caches/go-build", Size: 9 << 20})
-	if s.key("all"); slices.ContainsFunc(s.items, func(it item) bool { return it.cache != nil && it.selected }) {
-		t.Fatal("a selected a cache")
+	s.moved = true
+	s.addCache(sweep.Cache{Name: "Go build", Dir: "/home/Library/Caches/go-build", Clean: []string{"go", "clean", "-cache"}, Size: 9 << 20})
+	plain := func() string { return escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), "") }
+	if screen := plain(); strings.Contains(screen, "Go build") || !strings.Contains(screen, "2 folders ─┐") || !strings.Contains(screen, "2 caches") {
+		t.Fatalf("folders tab:\n%s", screen)
 	}
-	s.items[s.find("/home/Library/Caches/go-build")].selected = true
+
+	// Pick the cache in its tab, then go back: d there asks about folders only.
+	s.key("caches")
+	if screen := plain(); !strings.Contains(screen, "Go build · /home/Library/Caches/go-build") || !strings.Contains(screen, "1 cache ─┐") ||
+		!strings.Contains(screen, "Cache") || !strings.Contains(screen, "d clear") || !strings.Contains(screen, "1 folders") {
+		t.Fatalf("caches tab:\n%s", screen)
+	}
+	s.key("space")
+	s.key("folders")
+	if s.key("all"); s.items[s.find("/home/Library/Caches/go-build")].selected != true {
+		t.Fatal("a in the folders tab unpicked the cache")
+	}
 	s.key("delete")
-	box := escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), "")
-	for _, want := range []string{"Move 2 folders to Trash and clear 1 cache", "skip the Trash", clearButton} {
+	if slices.Contains(s.ask, "/home/Library/Caches/go-build") || len(s.ask) != 2 {
+		t.Fatalf("d in the folders tab asked about %q", s.ask)
+	}
+	s.yes = true
+	for _, c := range s.answer("enter") {
+		m.Update(m.run(c)())
+	}
+	if len(removed) != 2 || len(cleaned) != 0 {
+		t.Fatalf("folders tab: removed %v, cleaned %v", removed, cleaned)
+	}
+
+	// In the caches tab, d clears the picked cache with its tool.
+	s.key("caches")
+	s.key("delete")
+	box := plain()
+	for _, want := range []string{"Clear Go build cache (9.4 MB)?", "Runs go clean -cache.", clearButton} {
 		if !strings.Contains(box, want) {
 			t.Errorf("no %q in dialog:\n%s", want, box)
 		}
@@ -917,25 +944,37 @@ func TestCachesRouteToTheirTool(t *testing.T) {
 	for _, c := range s.answer("enter") {
 		m.Update(m.run(c)())
 	}
-	if !slices.Equal(cleaned, []string{"/home/Library/Caches/go-build"}) || len(removed) != 2 || slices.Contains(removed, "/home/Library/Caches/go-build") {
-		t.Fatalf("removed %v, cleaned %v", removed, cleaned)
+	if !slices.Equal(cleaned, []string{"/home/Library/Caches/go-build"}) || len(removed) != 2 {
+		t.Fatalf("caches tab: removed %v, cleaned %v", removed, cleaned)
 	}
 	if s.cleared != 9<<20 || s.freed != 3<<20 || s.deletions != 0 {
 		t.Errorf("cleared %d, freed %d, deletions %d", s.cleared, s.freed, s.deletions)
 	}
-	if screen := escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), ""); !strings.Contains(screen, "2 folders · 1 cache") {
-		t.Errorf("caches counted as folders:\n%s", screen)
-	}
-	s.tree = false
-	s.sort()
-	if line := escapes.ReplaceAllString(strings.Join(s.view(look{}, 50, 30), "\n"), ""); !strings.Contains(line, "Go build cache · …") {
-		t.Errorf("a narrow flat view cut the cache's name:\n%s", line)
-	}
-	if screen := escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), ""); !strings.Contains(screen, "Go build cache · /home/Library/Caches/go-build") {
-		t.Errorf("flat view doesn't say it's a cache:\n%s", screen)
-	}
-	if screen := escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), ""); !strings.Contains(screen, "✓ cleared") || !strings.Contains(screen, "cleared   9.4 MB") {
+	if screen := plain(); !strings.Contains(screen, "✓ cleared") || !strings.Contains(screen, "cleared   9.4 MB") {
 		t.Errorf("no cleared status:\n%s", screen)
+	}
+	// A narrow screen keeps the cache's name and cuts its path.
+	if screen := escapes.ReplaceAllString(strings.Join(s.view(look{}, 50, 30), "\n"), ""); !strings.Contains(screen, "Go build · /home/Library/Ca…") {
+		t.Errorf("narrow caches tab cut the name:\n%s", screen)
+	}
+}
+
+// An empty tab says why, and the tab keys still work there.
+func TestEmptyTabs(t *testing.T) {
+	s := &screen{finding: true, moved: true}
+	s.addCache(sweep.Cache{Name: "npm", Dir: "/home/.npm/_cacache", Size: 1})
+	plain := func() string { return escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), "") }
+	if !strings.Contains(plain(), "No folders to clean here. Press 2 for package caches.") {
+		t.Errorf("empty folders tab:\n%s", plain())
+	}
+	s.key("end") // nothing to move to: must not break the cursor
+	s.key("caches")
+	if s.key("space"); !s.items[0].selected {
+		t.Error("space in the caches tab didn't pick the cache")
+	}
+	s2 := &screen{finding: true, onCaches: true}
+	if !strings.Contains(escapes.ReplaceAllString(strings.Join(s2.view(look{}, 100, 30), "\n"), ""), "Looking for package caches…") {
+		t.Error("no message while caches are looked for")
 	}
 }
 
@@ -957,21 +996,5 @@ func TestEmptyScanWaitsForCaches(t *testing.T) {
 	m2.Update(cachesDoneMsg{})
 	if !m2.s.quitting {
 		t.Error("nothing at all found, but the screen stays open")
-	}
-}
-
-// The key bar says what d does: clear on caches, trash otherwise.
-func TestKeyBarSaysClearOnCaches(t *testing.T) {
-	s := newScreen(1)
-	s.tree, s.moved = true, true
-	s.addCache(sweep.Cache{Name: "npm", Dir: "/home/.npm/_cacache", Size: 9 << 20})
-	bar := func() string { return escapes.ReplaceAllString(s.view(look{}, 100, 30)[29], "") }
-	s.cursor = slices.IndexFunc(s.rows, func(r row) bool { return s.items[r.i].cache != nil && !r.head })
-	if !strings.Contains(bar(), "d clear") {
-		t.Errorf("on a cache: %q", bar())
-	}
-	s.items[s.find("/r/p00/node_modules")].selected = true
-	if !strings.Contains(bar(), "d trash") {
-		t.Errorf("a folder selected: %q", bar())
 	}
 }
