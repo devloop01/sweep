@@ -336,10 +336,18 @@ func mount(t *testing.T, dir string) {
 	if out, err := exec.Command("hdiutil", "attach", "-nobrowse", "-noautoopen", "-mountpoint", dir, img).CombinedOutput(); err != nil {
 		t.Skipf("hdiutil attach: %v\n%s", err, out)
 	}
+	// Detach can fail with "resource busy" (exit 16) while macOS still
+	// holds the volume, as it sometimes does on CI runners: try a few times.
 	t.Cleanup(func() {
-		if out, err := exec.Command("hdiutil", "detach", "-force", dir).CombinedOutput(); err != nil {
-			t.Errorf("hdiutil detach: %v\n%s", err, out)
+		var out []byte
+		var err error
+		for range 5 {
+			if out, err = exec.Command("hdiutil", "detach", "-force", dir).CombinedOutput(); err == nil {
+				return
+			}
+			time.Sleep(time.Second)
 		}
+		t.Errorf("hdiutil detach: %v\n%s", err, out)
 	})
 }
 
