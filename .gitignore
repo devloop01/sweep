@@ -3,3 +3,4 @@ dist/
 demo/bin/
 demo/projects/
 demo/home/
+.DS_Store
