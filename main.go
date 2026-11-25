@@ -41,8 +41,10 @@ Usage:
 In a terminal, sweep opens a list that fills in as it scans, biggest first:
   ↑/↓ or j/k    move (g/G: top/bottom)
   space/enter   select or unselect a folder (enter on a project: collapse/open)
-  a             select or unselect all
+  a             select or unselect everything in the open tab
   d or ⌫        move the selected folders, or the highlighted one, to the Trash
+                (in the caches tab: clear them, each with its own tool)
+  1 / 2         folders tab, or package caches tab
   y / n         confirm or cancel
   s             sort by size, name, or last change
   t             group folders by project
@@ -58,6 +60,10 @@ Flags:
   -y, --yes       move everything in the list to the Trash without asking
   -h, --help      show this help
       --version   print the version
+
+A second tab (2) lists package manager caches (npm, bun, Go, Homebrew,
+pip, uv). They don't go to the Trash: sweep runs the tool's own clean
+command, and they download again when needed.
 
 Folders in the Trash still take up space until you empty it. Everything
 sweep removes by default comes back with npm/pnpm install or the next dev
@@ -78,14 +84,16 @@ type env struct {
 	homes          []string // every path naming the home folder
 	system         []string // refused system roots
 	stdin          io.Reader
-	isTTY          bool                    // stdin is a terminal
-	color          bool                    // stdout takes ANSI colors
-	cols           int                     // stdout's width; 0 when it isn't a terminal
-	size           func() (cols, rows int) // terminal size for the interactive screen
-	afterScan      func()                  // tests: called when the interactive scan ends
-	replyWait      time.Duration           // tests: how long quitting waits for the terminal's color reply; 0 means a second
-	live           bool                    // stderr is a terminal: show scan progress
-	flushInput     func()                  // discards type-ahead before the prompt; nil in tests
+	isTTY          bool                                     // stdin is a terminal
+	color          bool                                     // stdout takes ANSI colors
+	cols           int                                      // stdout's width; 0 when it isn't a terminal
+	size           func() (cols, rows int)                  // terminal size for the interactive screen
+	afterScan      func()                                   // tests: called when the interactive scan ends
+	replyWait      time.Duration                            // tests: how long quitting waits for the terminal's color reply; 0 means a second
+	live           bool                                     // stderr is a terminal: show scan progress
+	flushInput     func()                                   // discards type-ahead before the prompt; nil in tests
+	caches         func(*sweep.Progress, func(sweep.Cache)) // finds package caches for the screen; nil in tests
+	clean          func(sweep.Cache) (int64, error)         // clears one; tests swap in a fake
 	stdout, stderr io.Writer
 	workers        int
 }
@@ -131,6 +139,18 @@ func main() {
 		live:   isTerminal(os.Stderr) && os.Getenv("TERM") != "dumb",
 		stdout: os.Stdout, stderr: os.Stderr,
 		workers: runtime.NumCPU(),
+		caches: func(p *sweep.Progress, found func(sweep.Cache)) {
+			if home, err := os.UserHomeDir(); err == nil {
+				sweep.FindCaches(home, os.Getenv, p, found)
+			}
+		},
+		clean: func(c sweep.Cache) (int64, error) {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return 0, err
+			}
+			return sweep.ClearCache(home, c)
+		},
 	})
 	select {
 	case msg := <-notice:

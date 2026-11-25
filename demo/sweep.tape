@@ -11,8 +11,12 @@ Set Theme "Catppuccin Mocha"
 Set TypingSpeed 70ms
 
 # Fresh state (so the default view), a home of its own (so its Trash is
-# demo/home/.Trash, not yours), a short prompt, and the demo folder.
+# demo/home/.Trash, not yours, and no package caches are found), a short
+# prompt, and the demo folder. The cache overrides are unset so none of
+# your real caches can show up and be cleared by the d below.
 Hide
+Type "unset GOCACHE GOMODCACHE GOPATH npm_config_cache BUN_INSTALL_CACHE_DIR HOMEBREW_CACHE PIP_CACHE_DIR UV_CACHE_DIR XDG_CACHE_HOME"
+Enter
 Type "mkdir -p demo/home && export HOME=$PWD/demo/home XDG_STATE_HOME=$(mktemp -d) PATH=$PWD/demo/bin:$PATH PS1='$ ' && cd demo/projects && clear"
 Enter
 Show

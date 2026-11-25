@@ -138,7 +138,7 @@ func snapshot(t *testing.T, dirs ...string) map[string]string {
 func TestRandomUseDeletesOnlyWhatWasPicked(t *testing.T) {
 	keys := []string{"up", "down", "down", "pgdn", "home", "end", "space", "space", "all",
 		"tree", "sort", "fold", "left", "right", "next", "prev", "help",
-		"enter", "delete", "delete", "enter", "yes", "yes", "no", "left", "right", "click", "click", "click"}
+		"enter", "delete", "delete", "enter", "yes", "yes", "no", "left", "right", "click", "click", "click", "caches", "folders"}
 	total := 0
 	defer func() {
 		if total < 100 {
