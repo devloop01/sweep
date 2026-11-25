@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/devloop01/sweep/internal/sweep"
 )
@@ -108,8 +109,14 @@ func TestScreenTrash(t *testing.T) {
 			t.Errorf("no %q in:\n%s", want, screen)
 		}
 	}
-	for _, line := range strings.Split(plain(40), "\n") {
-		if ansi.StringWidth(line) > 39 {
+	// The frame runs to the last column; the key bar, on the last line,
+	// stops short so a terminal can't scroll.
+	lines := strings.Split(plain(40), "\n")
+	if ansi.StringWidth(lines[len(lines)-1]) > 39 {
+		t.Errorf("key bar reaches the last column: %q", lines[len(lines)-1])
+	}
+	for _, line := range lines {
+		if ansi.StringWidth(line) > 40 {
 			t.Errorf("line wider than a 40-column terminal: %q", line)
 		}
 	}
@@ -122,7 +129,11 @@ func TestScreenTrash(t *testing.T) {
 		t.Errorf("no moving status:\n%s", screen)
 	}
 	s.done(del[0].Path, nil)
-	screen = plain(80)
+	// Said once: the dashboard's disk panel, or a small terminal's status line.
+	if screen := plain(80); !strings.Contains(screen, "in Trash  3.1 MB") || strings.Contains(screen, "Moved") {
+		t.Errorf("moved size not in the disk panel alone:\n%s", screen)
+	}
+	screen = escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 15), "\n"), "") // too short for the panels
 	for _, want := range []string{"✓ in Trash", "Moved 3.1 MB to the Trash · empty it to get the space back"} {
 		if !strings.Contains(screen, want) {
 			t.Errorf("no %q in:\n%s", want, screen)
@@ -282,12 +293,15 @@ func TestScreenView(t *testing.T) {
 				t.Errorf("%dx%d: line %d wide: %q", w, h, n, l)
 			}
 		}
-		if !slices.ContainsFunc(lines, func(l string) bool { return strings.HasPrefix(escapes.ReplaceAllString(l, ""), " ▌") }) {
+		if !slices.ContainsFunc(lines, func(l string) bool { return []rune(escapes.ReplaceAllString(l, "") + "  ")[1] == '▌' }) {
 			t.Errorf("%dx%d: cursor row scrolled out of view", w, h)
 		}
 	}
 	s.free = 38_000_000_000
-	if head := escapes.ReplaceAllString(s.view(look{}, 80, 24)[1], ""); !strings.Contains(head, "· 38.0 GB free") {
+	if disk := escapes.ReplaceAllString(s.view(look{}, 80, 24)[1], ""); !strings.Contains(disk, "free      38.0 GB") {
+		t.Errorf("disk panel: %q", disk)
+	}
+	if head := escapes.ReplaceAllString(s.view(look{}, 60, 24)[1], ""); !strings.Contains(head, "· 38.0 GB free") {
 		t.Errorf("header: %q", head)
 	}
 	if head := escapes.ReplaceAllString(s.view(look{}, 40, 24)[1], ""); strings.Contains(head, "free") {
@@ -331,7 +345,13 @@ func TestScreenProjects(t *testing.T) {
 	if s.items[s.rows[2].i].sub != "apps/web/.next" {
 		t.Errorf("sub path %q", s.items[s.rows[2].i].sub)
 	}
-	if head := escapes.ReplaceAllString(s.view(look{}, 80, 24)[1], ""); !strings.Contains(head, "3 folders") {
+	s.dir = "~/" + strings.Repeat("deep/", 30) + "code"
+	if !slices.ContainsFunc(s.view(look{}, 80, 24), func(l string) bool {
+		return strings.Contains(escapes.ReplaceAllString(l, ""), "3 folders ─┐")
+	}) {
+		t.Error("frame title lost the folder count to a long path")
+	}
+	if head := escapes.ReplaceAllString(s.view(look{}, 60, 24)[1], ""); !strings.Contains(head, "3 folders") {
 		t.Errorf("header counts project rows: %q", head)
 	}
 	s.key("down") // cursor follows the header across a re-sort
@@ -567,13 +587,13 @@ func TestScreenClick(t *testing.T) {
 func TestDialogButtonsIgnoreListText(t *testing.T) {
 	s := &screen{}
 	for i := range 30 {
-		path := fmt.Sprintf("p%02d/%s/Move to Trash Later/node_modules", i, strings.Repeat("x", 90))
+		path := fmt.Sprintf("p%02d/%s/Move to Trash Later/node_modules", i, strings.Repeat("x", 150))
 		s.add(sweep.Candidate{Path: "/r/" + path, Size: int64(30-i) << 20}, path)
 	}
 	s.moved = true                                        // past the guard for a key right after the list changed
 	s.items[0].selected, s.items[1].selected = true, true // a short title, so a narrow box
 	s.key("delete")
-	plain := ansi.Strip(s.view(look{}, 160, 24)[s.drawn.buttons])
+	plain := ansi.Strip(s.view(look{}, 200, 24)[s.drawn.buttons])
 	text := ansi.StringWidth(plain[:strings.LastIndex(plain, "Move to Trash")])
 	if s.drawn.del[1] > text {
 		t.Fatalf("the list's Delete at %d isn't right of the button %v:\n%s", text, s.drawn.del, plain)
@@ -843,5 +863,25 @@ func TestQuitStopsScan(t *testing.T) {
 	m.Update(signalMsg{})
 	if cands, _ := sweep.Scan(root, sweep.DefaultTargets(), 2, m.progress); len(cands) != 0 {
 		t.Errorf("the scan went on after quitting: listed %d", len(cands))
+	}
+}
+
+func TestMeter(t *testing.T) {
+	var plain lipgloss.Style
+	for _, c := range []struct {
+		part, whole int64
+		n           int
+		want        string
+	}{
+		{0, 10, 4, "⣀⣀⣀⣀"},
+		{1, 1000, 4, "⣆⣀⣀⣀"}, // anything at all shows
+		{5, 10, 4, "⣶⣶⣀⣀"},
+		{6, 10, 4, "⣶⣶⣆⣀"},
+		{10, 10, 4, "⣶⣶⣶⣶"},
+		{20, 10, 4, "⣶⣶⣶⣶"}, // a project row can outgrow the scale
+	} {
+		if got := meter(c.part, c.whole, c.n, plain, plain); got != c.want {
+			t.Errorf("meter(%d, %d, %d) = %q, want %q", c.part, c.whole, c.n, got, c.want)
+		}
 	}
 }

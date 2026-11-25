@@ -162,8 +162,10 @@ type screen struct {
 		row string
 		at  time.Time
 	}
-	free int64 // free space on DIR's disk, 0 if unknown
-	yes  bool  // the dialog's Move to Trash button has focus (Cancel does at first)
+	free int64  // free space on DIR's disk, 0 if unknown
+	disk int64  // DIR's disk size, 0 if unknown
+	dir  string // DIR as shown in the frame's title, printable
+	yes  bool   // the dialog's Move to Trash button has focus (Cancel does at first)
 }
 
 // moveButton is the label of the dialog's button that goes ahead.
@@ -566,6 +568,7 @@ var (
 	warn   = lipgloss.NewStyle().Foreground(lipgloss.Yellow)
 	good   = lipgloss.NewStyle().Foreground(lipgloss.Green)
 	bad    = lipgloss.NewStyle().Foreground(lipgloss.Red)
+	edge   = lipgloss.NewStyle().Foreground(accent).Faint(true) // panel and frame borders
 )
 
 // sizeLook is sizeStyle (shared with the plain list) as a Lip Gloss style.
@@ -593,14 +596,46 @@ func (s *screen) view(l look, w, h int) []string {
 	if free := " · " + human(s.free) + " free"; s.free > 0 && ansi.StringWidth(" sweep   "+head+free) < w {
 		head += faint.Render(free)
 	}
-	// A one-column margin, and in a tall enough terminal a blank line on top
-	// and the column names.
+	// A tall enough terminal frames the list and shows the column names; a
+	// big one also gets the dashboard panels on top instead of the title.
+	// The frame's left edge sits in the list's one-column margin, so clicks
+	// land on the same columns either way.
 	roomy := h >= 12
-	lines := []string{clip(" "+badge.Render("sweep")+"  "+head, w-1), ""}
+	dash := roomy && w >= 70 && h >= 20
+	var lines []string
+	switch {
+	case dash:
+		lines = s.panels(l, w)
+	case roomy:
+		lines = []string{"", clip(" "+badge.Render("sweep")+"  "+head, w-1)}
+	default:
+		lines = []string{clip(" "+badge.Render("sweep")+"  "+head, w-1), ""}
+	}
+	// Framed, the list runs edge to edge; its status goes in the bottom
+	// border, so the key bar sits right under it.
+	side, rim := " ", 0 // the list's left edge, and the columns the frame's right edge takes
 	if roomy {
-		lines = append([]string{""}, lines...)
+		side, rim = edge.Render("│"), 1
+		right := folders(len(s.items))
+		if s.scanning {
+			right = l.spin + " " + right
+		}
+		// The path gives way first (cut from the left), so the count stays.
+		by := " · by " + orderNames[s.order]
+		room := w - len("┌─ folders ─  ") - len(by) - ansi.StringWidth(right) - len("  ─┐") - 2
+		lines = append(lines, frameTop("folders", faint.Render(fit(s.dir, max(room, 1))+by), right, w))
+	}
+	// framed closes a list line with the frame's right edge.
+	framed := func(line string) string {
+		if !roomy {
+			return clip(line, w-1)
+		}
+		return pad(line, w-1) + edge.Render("│")
 	}
 	s.page = max(h-len(lines)-3, 1) // a blank line, status, keys
+	if roomy {
+		s.page = max(h-len(lines)-2, 1) // the frame's bottom with the status, keys
+	}
 	if roomy && len(s.items) > 0 {
 		s.page = max(s.page-1, 1)
 	}
@@ -614,7 +649,15 @@ func (s *screen) view(l look, w, h int) []string {
 	if w >= 50 {
 		ageW = 10
 	}
-	room := max(w-1-7-2-ageW-10-1, 1) // margin, cursor bar and checkbox, gap, age, status column, spare
+	barW := 0 // size bar plus its gap, only if the path keeps 30 columns
+	if w-21-rim-ageW-12 >= 30 {
+		barW = 12
+	}
+	room := max(w-1-7-2-ageW-10-1-rim-barW, 1) // margin, cursor bar and checkbox, gap, age, status column, spare
+	var biggest int64                          // the size bars' scale
+	for _, r := range s.rows {
+		biggest = max(biggest, s.rowSize(r))
+	}
 	s.drawn = layout{head: -1, buttons: -1}
 	if roomy && len(s.items) > 0 {
 		s.drawn.head = len(lines)
@@ -626,11 +669,11 @@ func (s *screen) view(l look, w, h int) []string {
 			}
 			return faint.Render(fmt.Sprintf("%*s", width, name))
 		}
-		names := "        " + label("Folder", byName, -room) + "  "
+		names := side + "       " + label("Folder", byName, -room) + "  "
 		if ageW > 0 {
 			names += label("Touched", byRecent, 8) + "  "
 		}
-		lines = append(lines, clip(names+label("Size", bySize, 10), w-1))
+		lines = append(lines, framed(names+label("Size", bySize, 10)))
 	}
 	hl := lipgloss.NewStyle().Background(lipgloss.LightDark(l.dark)(lipgloss.Color("#E8E4FA"), lipgloss.Color("#2B2540")))
 	s.drawn.list = len(lines)
@@ -669,7 +712,7 @@ func (s *screen) view(l look, w, h int) []string {
 		box := row.Render("   ")
 		switch {
 		case nsel > 0 && nsel == nready:
-			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("[✓]")
+			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("[x]")
 			pathStyle = pathStyle.Foreground(accent)
 		case nsel > 0:
 			box = lipgloss.NewStyle().Foreground(accent).Bold(true).Inherit(row).Render("[-]")
@@ -715,11 +758,19 @@ func (s *screen) view(l look, w, h int) []string {
 		if ageW > 0 {
 			cells += faint.Inherit(row).Render(fmt.Sprintf("%8s", age(touched, time.Now()))) + row.Render("  ")
 		}
-		pad := strings.Repeat(" ", max(10-ansi.StringWidth(status), 0))
-		lines = append(lines, clip(" "+bar+row.Render(" ")+box+row.Render("  ")+cells+style.Inherit(row).Render(pad+status)+row.Render(" "), w-1))
+		gap := strings.Repeat(" ", max(10-ansi.StringWidth(status), 0))
+		cells += style.Inherit(row).Render(gap + status)
+		if barW > 0 {
+			cells += row.Render("  ") + meter(size, biggest, barW-2, sizeLook(size).Inherit(row), faint.Inherit(row))
+		}
+		lines = append(lines, framed(side+bar+row.Render(" ")+box+row.Render("  ")+cells+row.Render(" ")))
 	}
 	for len(lines) < h-2 {
-		lines = append(lines, "")
+		if roomy {
+			lines = append(lines, framed(side))
+		} else {
+			lines = append(lines, "")
+		}
 	}
 
 	var nsel int
@@ -730,17 +781,22 @@ func (s *screen) view(l look, w, h int) []string {
 			selSize += it.cand.Size
 		}
 	}
+	var status string
 	switch {
 	case s.quitting && s.deletions > 0:
-		lines = append(lines, clip(" "+l.spin+" "+warn.Render("Finishing moves to the Trash…"), w-1))
+		status = l.spin + " " + warn.Render("Finishing moves to the Trash…")
 	case s.message != "":
-		lines = append(lines, clip(" "+bad.Render(s.message), w-1))
+		status = bad.Render(s.message)
+	case dash: // the disk panel shows what's selected and moved
 	case nsel > 0:
-		lines = append(lines, clip(" "+warn.Render("Selected "+folders(nsel)+", "+human(selSize)), w-1))
+		status = warn.Render("Selected " + folders(nsel) + ", " + human(selSize))
 	case s.freed > 0:
-		lines = append(lines, clip(" "+good.Render("Moved "+human(s.freed)+" to the Trash")+faint.Render(" · empty it to get the space back"), w-1))
-	default:
-		lines = append(lines, "")
+		status = good.Render("Moved "+human(s.freed)+" to the Trash") + faint.Render(" · empty it to get the space back")
+	}
+	if roomy {
+		lines = append(lines, frameBottom(status, w))
+	} else {
+		lines = append(lines, clip(" "+status, w-1))
 	}
 	lines = append(lines, " "+s.help(l, w-1))
 	var box string
@@ -760,7 +816,7 @@ func (s *screen) view(l look, w, h int) []string {
 	).Render()
 	lines = strings.Split(out, "\n")
 	for i := range lines {
-		lines[i] = clip(lines[i], w-1)
+		lines[i] = clip(lines[i], w)
 	}
 	// The buttons sit above the box's bottom padding and border. They're
 	// found in the box itself, not the screen line, where list text beside
@@ -881,17 +937,13 @@ func (s *screen) help(l look, w int) string {
 		b.SetEnabled(on)
 		return b
 	}
-	delDesc := "trash"
-	if nsel > 0 {
-		delDesc = fmt.Sprintf("trash (%d)", nsel)
-	}
 	// Kept to fit 80 columns; moving and the rest are in the ? list.
 	return clip(hm.ShortHelpView([]key.Binding{
 		bind("space", "select", canSelect, "space"),
 		// The project view shows c in a's place; there's room for one.
 		bind("a", "all", !s.tree && slices.ContainsFunc(s.items, func(it item) bool { return it.state == ready }), "all"),
 		bind("c", "fold all", s.tree && slices.ContainsFunc(s.rows, func(r row) bool { return r.head }), "fold"),
-		bind("d", delDesc, !s.quitting && (nsel > 0 || canSelect), "delete"),
+		bind("d", "trash", !s.quitting && (nsel > 0 || canSelect), "delete"),
 		bind("t", "projects", len(s.items) > 0, "tree"),
 		bind("?", "help", true, "help"),
 		bind("q", "quit", true, "quit"),
@@ -1088,7 +1140,12 @@ func runScreen(e env, s *screen, r *os.Root, t sweep.Targets, root, trash string
 	}
 	w, h := e.size()
 	sem := make(chan struct{}, max(e.workers, 1)) // deletions at once
-	s.free = diskFree(root)
+	s.free, s.disk, s.dir = diskFree(root), diskSize(root), printable(root)
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, root); err == nil && filepath.IsLocal(rel) {
+			s.dir = "~/" + printable(rel)
+		}
+	}
 	m := &model{s: s, e: e, w: w, h: h, dark: true, progress: &sweep.Progress{}, spin: spinner.New(spinner.WithSpinner(spinner.MiniDot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent))), remove: func(c sweep.Candidate) result {
 		sem <- struct{}{}
 		defer func() { <-sem }()
@@ -1172,6 +1229,15 @@ func diskFree(dir string) int64 {
 	return max(int64(st.Bavail)*int64(st.Bsize), 1)
 }
 
+// diskSize is the size of dir's disk, or 0 if it can't tell.
+func diskSize(dir string) int64 {
+	var st syscall.Statfs_t
+	if syscall.Statfs(dir, &st) != nil {
+		return 0
+	}
+	return int64(st.Blocks) * int64(st.Bsize)
+}
+
 // quitOnEOF calls quit when reading fails, EOF included. It waits first:
 // Bubble Tea reads ahead and may still be passing on keys from the last read
 // (holding a lone esc for its 50ms timeout), and those come before the quit.
@@ -1223,4 +1289,168 @@ func fit(s string, n int) string {
 		return "…" + ansi.TruncateLeft(s, w-n+1, "")
 	}
 	return s
+}
+
+// rowSize is what a row's folders take up, not counting ones already moved.
+func (s *screen) rowSize(r row) int64 {
+	var n int64
+	for _, it := range s.items[r.i : r.i+r.n] {
+		if it.state != deleted {
+			n += it.cand.Size
+		}
+	}
+	return n
+}
+
+// panels draws the dashboard's top row, w columns wide: the disk gauge and
+// totals on the left, the space by kind of folder on the right.
+func (s *screen) panels(l look, w int) []string {
+	const height = 6 // lines inside each panel: gauge, gap, free, can free, selected, in Trash
+	var avail, sel int64
+	var nsel int
+	byKind := map[string]int64{}
+	for _, it := range s.items {
+		if it.state == deleted {
+			continue
+		}
+		avail += it.cand.Size
+		byKind[kindOf(it.cand.Path)] += it.cand.Size
+		if it.selected {
+			nsel++
+			sel += it.cand.Size
+		}
+	}
+	lw := w * 45 / 100
+	rw := w - lw
+	stat := func(name, val string) string { return faint.Render(fmt.Sprintf("%-10s", name)) + val }
+
+	var disk []string
+	if s.disk > 0 && s.free > 0 {
+		used := max(s.disk-s.free, 0)
+		label := " " + human(used) + " / " + human(s.disk)
+		disk = append(disk, meter(used, s.disk, lw-4-ansi.StringWidth(label), lipgloss.NewStyle().Foreground(accent), faint)+faint.Render(label), "")
+	}
+	if s.free > 0 {
+		disk = append(disk, stat("free", human(s.free)))
+	}
+	found := strong.Render(human(avail))
+	if s.scanning {
+		found += " " + l.spin + faint.Render(fmt.Sprintf(" %d checked", s.checked))
+	}
+	disk = append(disk, stat("can free", found))
+	if nsel > 0 {
+		disk = append(disk, stat("selected", warn.Render(human(sel))+faint.Render(" · "+folders(nsel))))
+	}
+	if s.freed > 0 {
+		disk = append(disk, stat("in Trash", good.Render(human(s.freed))))
+	}
+
+	kinds := make([]string, 0, len(byKind))
+	for k := range byKind {
+		kinds = append(kinds, k)
+	}
+	slices.SortFunc(kinds, func(a, b string) int { return cmp.Or(cmp.Compare(byKind[b], byKind[a]), cmp.Compare(a, b)) })
+	var kindLines []string
+	for _, k := range kinds[:min(len(kinds), height)] {
+		kindLines = append(kindLines, fmt.Sprintf("%-13s", k)+
+			meter(byKind[k], byKind[kinds[0]], rw-4-13-9, sizeLook(byKind[k]), faint)+
+			sizeLook(byKind[k]).Render(fmt.Sprintf("%9s", human(byKind[k]))))
+	}
+	if len(kinds) == 0 {
+		kindLines = []string{faint.Render("nothing found yet")}
+	}
+
+	left, right := panel("disk", disk, lw, height), panel("by kind", kindLines, rw, height)
+	for i := range left {
+		left[i] += right[i]
+	}
+	return left
+}
+
+// kindOf groups a folder by what it holds, as the README lists them. Names
+// added in targets.conf are "other".
+func kindOf(path string) string {
+	base := filepath.Base(path)
+	switch base {
+	case "node_modules":
+		return "dependencies"
+	case ".pytest_cache", ".mypy_cache", ".ruff_cache":
+		return "python"
+	case "dist", "build", "out", "target":
+		return "build output"
+	case ".next", ".svelte-kit", ".turbo", ".nuxt", ".output", ".astro", ".vite", ".parcel-cache",
+		".angular", ".docusaurus", ".nx", ".vinxi", "storybook-static":
+		return "framework"
+	}
+	if base == "output" && filepath.Base(filepath.Dir(path)) == ".vercel" {
+		return "framework"
+	}
+	return "other"
+}
+
+// panel is a bordered box w columns wide with height lines of body.
+func panel(title string, body []string, w, height int) []string {
+	out := []string{frameTop(title, "", "", w)}
+	for i := range height {
+		var line string
+		if i < len(body) {
+			line = body[i]
+		}
+		out = append(out, edge.Render("│")+" "+pad(line, w-4)+" "+edge.Render("│"))
+	}
+	return append(out, edge.Render("└"+strings.Repeat("─", max(w-2, 0))+"┘"))
+}
+
+// frameTop is a box's top border, w columns wide, with its title (and a
+// faint note after it) on the left and right on the right, like btop.
+func frameTop(title, note, right string, w int) string {
+	left := edge.Render("┌─ ") + lipgloss.NewStyle().Foreground(accent).Bold(true).Render(title) + " "
+	if note != "" {
+		left += edge.Render("─ ") + note + " "
+	}
+	end := edge.Render("┐")
+	if right != "" {
+		end = " " + right + edge.Render(" ─┐")
+	}
+	fill := w - ansi.StringWidth(left) - ansi.StringWidth(end)
+	if fill < 1 { // too narrow for everything: drop the right side, then cut the title
+		end, fill = edge.Render("┐"), w-ansi.StringWidth(left)-1
+		left = clip(left, w-1-max(fill, 0))
+	}
+	return left + edge.Render(strings.Repeat("─", max(fill, 0))) + end
+}
+
+// frameBottom is a box's bottom border, w columns wide, with status (if
+// any) set in it on the left.
+func frameBottom(status string, w int) string {
+	left := edge.Render("└")
+	if status != "" {
+		left = clip(left+edge.Render("─ ")+status+" ", w-2)
+	}
+	return left + edge.Render(strings.Repeat("─", max(w-1-ansi.StringWidth(left), 0))+"┘")
+}
+
+// meter is a bar n columns wide, filled in proportion to part of whole,
+// drawn in braille like btop's graphs: solid ⣶ in front, a dotted ⣀ track
+// behind. Each cell is two dot columns, so the end can stop mid-cell (⣆).
+// The bar skips the cell's top row of dots: a gap between bars on next lines.
+func meter(part, whole int64, n int, on, off lipgloss.Style) string {
+	if n <= 0 {
+		return ""
+	}
+	half := 0 // filled dot columns, two per cell
+	if whole > 0 && part > 0 {
+		half = min(max(int(float64(part)/float64(whole)*float64(2*n)+0.5), 1), 2*n)
+	}
+	bar := strings.Repeat("⣶", half/2)
+	if half%2 == 1 {
+		bar += "⣆" // left column solid, the track's dot on the right
+	}
+	return on.Render(bar) + off.Render(strings.Repeat("⣀", n-(half+1)/2))
+}
+
+// pad cuts or fills s to exactly n columns.
+func pad(s string, n int) string {
+	s = clip(s, n)
+	return s + strings.Repeat(" ", max(n-ansi.StringWidth(s), 0))
 }
