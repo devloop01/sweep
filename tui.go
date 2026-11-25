@@ -203,6 +203,14 @@ func (s *screen) addCache(c sweep.Cache) {
 	s.addIn(sweep.Candidate{Path: c.Dir, Size: c.Size}, c.Name, cacheGroup)
 	it := &s.items[s.find(c.Dir)]
 	it.cache, it.sub = &c, c.Name
+	// Listed among folders, a bare "npm" would read like a folder's name.
+	where := c.Dir
+	if home, err := os.UserHomeDir(); err == nil {
+		if rel, err := filepath.Rel(home, c.Dir); err == nil && filepath.IsLocal(rel) {
+			where = "~/" + rel
+		}
+	}
+	it.path = c.Name + " cache · " + printable(where)
 }
 
 // finish takes the scan's final sizes (hard links counted once) and how
@@ -623,7 +631,7 @@ func sizeLook(b int64) lipgloss.Style {
 // view draws the screen for a w×h terminal, one string per line: a title,
 // the list, a status line, and the keys that do something right now.
 func (s *screen) view(l look, w, h int) []string {
-	head := strong.Render(folders(len(s.items)) + " · " + human(s.total))
+	head := strong.Render(s.count() + " · " + human(s.total))
 	if s.scanning || s.finding {
 		head = l.spin + " " + faint.Render(fmt.Sprintf("Scanning… %d checked, %d found", s.checked, len(s.items)))
 	}
@@ -651,7 +659,7 @@ func (s *screen) view(l look, w, h int) []string {
 	side, rim := " ", 0 // the list's left edge, and the columns the frame's right edge takes
 	if roomy {
 		side, rim = edge.Render("│"), 1
-		right := folders(len(s.items))
+		right := s.count()
 		if s.scanning || s.finding {
 			right = l.spin + " " + right
 		}
@@ -792,6 +800,9 @@ func (s *screen) view(l look, w, h int) []string {
 			box = row.Render("   ")
 		default:
 			path := fit(it.path, room)
+			if it.cache != nil { // keep the name; the path after it can go
+				path = ansi.Truncate(it.path, room, "…")
+			}
 			cells = pathStyle.Inherit(row).Render(path) + row.Render(strings.Repeat(" ", max(room-ansi.StringWidth(path), 0))+"  ")
 		}
 		if ageW > 0 {
@@ -823,7 +834,7 @@ func (s *screen) view(l look, w, h int) []string {
 	var status string
 	switch {
 	case s.quitting && s.deletions > 0:
-		status = l.spin + " " + warn.Render("Finishing moves to the Trash…")
+		status = l.spin + " " + warn.Render("Finishing up…")
 	case s.message != "":
 		status = bad.Render(s.message)
 	case dash: // the disk panel shows what's selected and moved
@@ -900,6 +911,9 @@ func (s *screen) dialog(l look, w int) string {
 	case len(s.ask) == 1:
 		// The box adds about 35 columns around the path.
 		what = fit(first.path, min(40, max(w-35, 8)))
+		if first.cache != nil {
+			what = first.cache.Name + " cache"
+		}
 	case same:
 		what += " in " + fit(first.proj.name, min(30, max(w-47, 8)))
 	}
@@ -910,6 +924,9 @@ func (s *screen) dialog(l look, w int) string {
 			title = fmt.Sprintf("Move %s to Trash and clear %s (%s)?", folders(len(s.ask)-nc), caches(nc), human(size))
 		}
 		note = faint.Render("Caches skip the Trash and download again when needed.")
+		if len(s.ask) == 1 {
+			note = faint.Render("Runs " + strings.Join(first.cache.Clean, " ") + ". Caches skip the Trash.")
+		}
 	}
 	button := func(label string, focus bool) string {
 		st := lipgloss.NewStyle().Padding(0, 2).Foreground(lipgloss.LightDark(l.dark)(lipgloss.Color("#4A4A4A"), lipgloss.Color("#B2B2B2"))).
@@ -970,6 +987,20 @@ func (s *screen) dWord(nsel int) string {
 	return "trash"
 }
 
+// count is how many folders, and caches if any, the list holds.
+func (s *screen) count() string {
+	nc := 0
+	for _, it := range s.items {
+		if it.cache != nil {
+			nc++
+		}
+	}
+	if nc == 0 {
+		return folders(len(s.items))
+	}
+	return folders(len(s.items)-nc) + " · " + caches(nc)
+}
+
 // caches is "1 cache" or "n caches".
 func caches(n int) string {
 	if n == 1 {
@@ -986,7 +1017,7 @@ func keyList(l look) string {
 		{"pgup pgdn", "move a page"},
 		{"g G", "go to the top or bottom"},
 		{"space", "select a folder, or all of a project's"},
-		{"a", "select all, or none"},
+		{"a", "select all folders, or none (caches are picked one by one)"},
 		{"enter", "select a folder, or collapse or open a project"},
 		{"d ⌫", "move the selected folders, or the highlighted one, to the Trash;"},
 		{"", "a package cache is cleared by its own tool instead"},

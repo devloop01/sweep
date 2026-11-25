@@ -42,7 +42,7 @@ func TestFindCaches(t *testing.T) {
 		got = append(got, c.Name+" "+rel)
 	})
 	slices.Sort(got)
-	want := []string{"Go build cache elsewhere/gocache", "npm .npm/_cacache"}
+	want := []string{"Go build elsewhere/gocache", "npm .npm/_cacache"}
 	if !slices.Equal(got, want) {
 		t.Errorf("found %q, want %q", got, want)
 	}

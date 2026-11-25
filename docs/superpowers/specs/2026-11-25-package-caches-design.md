@@ -38,5 +38,7 @@ and ~/Library. The user wanted them cleared from the dashboard.
 - The guard (home, ~/Library, dot folders) is unchanged: it governs the
   scan, and caches don't go through the scan.
 - "Nothing to clean" waits for both the scan and the cache search.
-- Homebrew is named "Homebrew cleanup": `brew cleanup` also removes old
+- Caches are named after their tool ("Homebrew", "Go build"); flat view
+  adds "cache · ~/path" so they don't read as folders. Clearing one shows
+  the exact command in the dialog, since `brew cleanup` also removes old
   versions of installed formulae.

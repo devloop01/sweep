@@ -901,7 +901,7 @@ func TestCachesRouteToTheirTool(t *testing.T) {
 	}
 	s := m.s
 	s.tree, s.moved = true, true
-	s.addCache(sweep.Cache{Name: "Go build cache", Dir: "/home/Library/Caches/go-build", Size: 9 << 20})
+	s.addCache(sweep.Cache{Name: "Go build", Dir: "/home/Library/Caches/go-build", Size: 9 << 20})
 	if s.key("all"); slices.ContainsFunc(s.items, func(it item) bool { return it.cache != nil && it.selected }) {
 		t.Fatal("a selected a cache")
 	}
@@ -922,6 +922,17 @@ func TestCachesRouteToTheirTool(t *testing.T) {
 	}
 	if s.cleared != 9<<20 || s.freed != 3<<20 || s.deletions != 0 {
 		t.Errorf("cleared %d, freed %d, deletions %d", s.cleared, s.freed, s.deletions)
+	}
+	if screen := escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), ""); !strings.Contains(screen, "2 folders · 1 cache") {
+		t.Errorf("caches counted as folders:\n%s", screen)
+	}
+	s.tree = false
+	s.sort()
+	if line := escapes.ReplaceAllString(strings.Join(s.view(look{}, 50, 30), "\n"), ""); !strings.Contains(line, "Go build cache · …") {
+		t.Errorf("a narrow flat view cut the cache's name:\n%s", line)
+	}
+	if screen := escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), ""); !strings.Contains(screen, "Go build cache · /home/Library/Caches/go-build") {
+		t.Errorf("flat view doesn't say it's a cache:\n%s", screen)
 	}
 	if screen := escapes.ReplaceAllString(strings.Join(s.view(look{}, 100, 30), "\n"), ""); !strings.Contains(screen, "✓ cleared") || !strings.Contains(screen, "cleared   9.4 MB") {
 		t.Errorf("no cleared status:\n%s", screen)

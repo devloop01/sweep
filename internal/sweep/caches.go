@@ -19,7 +19,7 @@ import (
 // the home folder, outside any project. sweep never deletes inside it; it
 // runs the tool's own clean command, which knows what's safe to drop.
 type Cache struct {
-	Name  string   // "npm", "Go modules"
+	Name  string   // "npm", "Go modules": the tool, not the word cache
 	Dir   string   // the folder sized, absolute
 	Clean []string // the tool's command that clears it, run from the home folder
 	Size  int64    // bytes clearing can free: files with no other hard link
@@ -55,7 +55,7 @@ var cacheSpecs = []cacheSpec{
 		return filepath.Join(cmp.Or(env("npm_config_cache"), filepath.Join(home, ".npm")), "_cacache")
 	}, []string{"npm", "cache", "clean", "--force"}},
 	{"bun", "bun", orHome("BUN_INSTALL_CACHE_DIR", ".bun/install/cache"), []string{"bun", "pm", "cache", "rm"}},
-	{"Go build cache", "go", orHome("GOCACHE", "Library/Caches/go-build"), []string{"go", "clean", "-cache"}},
+	{"Go build", "go", orHome("GOCACHE", "Library/Caches/go-build"), []string{"go", "clean", "-cache"}},
 	{"Go modules", "go", func(home string, env func(string) string) string {
 		if d := env("GOMODCACHE"); d != "" {
 			return d
@@ -63,8 +63,8 @@ var cacheSpecs = []cacheSpec{
 		return filepath.Join(cmp.Or(strings.Split(env("GOPATH"), ":")[0], filepath.Join(home, "go")), "pkg/mod")
 	}, []string{"go", "clean", "-modcache"}},
 	// brew cleanup also removes old versions of installed formulae, as
-	// Homebrew does by itself every 30 days; hence "cleanup", not "cache".
-	{"Homebrew cleanup", "brew", orHome("HOMEBREW_CACHE", "Library/Caches/Homebrew"), []string{"brew", "cleanup", "--prune=all"}},
+	// Homebrew does by itself every 30 days; the dialog shows the command.
+	{"Homebrew", "brew", orHome("HOMEBREW_CACHE", "Library/Caches/Homebrew"), []string{"brew", "cleanup", "--prune=all"}},
 	{"pip", "pip3", orHome("PIP_CACHE_DIR", "Library/Caches/pip"), []string{"pip3", "cache", "purge"}},
 	{"uv", "uv", func(home string, env func(string) string) string {
 		return cmp.Or(env("UV_CACHE_DIR"), filepath.Join(cmp.Or(env("XDG_CACHE_HOME"), filepath.Join(home, ".cache")), "uv"))
